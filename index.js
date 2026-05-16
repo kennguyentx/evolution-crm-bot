@@ -287,9 +287,23 @@ async function handleCIMAttachment(message, attachment) {
 
     // Parse with Claude
     const response = await anthropic.messages.create({
-      model: 'claude-opus-4-5',
+      model: 'claude-sonnet-4-6',
       max_tokens: 1200,
-      system: `You extract deal data from CIMs. Return ONLY valid JSON with these keys: company_name, sector, geography, description, revenue (number in $), ebitda (number in $), asking_price (number in $), ev_ebitda_multiple (number), deal_type (platform/add-on/recap/growth), source_notes, cim_summary (3-4 sentences).`,
+      system: `You extract factual deal data from teasers and CIMs. Return ONLY valid JSON, no markdown, no opinions.
+
+{
+  "company_name": "exact company name as stated",
+  "sector": "one of: Underground Utilities | Electrical Contracting | Civil / Public Works | Commercial Landscaping | Fiber Optics | HVAC | Plumbing | Industrial Services | Environmental Services | Construction & Engineering | Other",
+  "geography": "primary state(s) or region as stated",
+  "deal_type": "one of: platform | add-on | recap | growth",
+  "revenue": "number in raw dollars or null",
+  "ebitda": "number in raw dollars or null",
+  "cim_summary": "3-5 factual sentences about what company does, where it operates, financial profile, and transaction context. No opinions or qualitative words like attractive or compelling.",
+  "banker_name": "full name of banker/broker or null",
+  "banker_firm": "investment bank or advisory firm name or null"
+}
+
+Dollar values as raw numbers (4200000 for $4.2M). Return null for anything not explicitly stated.`,
       messages: [{
         role: 'user',
         content: [
@@ -304,10 +318,19 @@ async function handleCIMAttachment(message, attachment) {
 
     // Save to Supabase
     const { data, error } = await supabase.from('deals').insert({
-      ...parsed,
+      company_name: parsed.company_name || 'Unknown',
+      sector: parsed.sector || null,
+      geography: parsed.geography || null,
+      deal_type: parsed.deal_type || 'platform',
+      revenue: parsed.revenue || null,
+      ebitda: parsed.ebitda || null,
+      description: parsed.cim_summary || null,
+      cim_summary: parsed.cim_summary || null,
+      source_notes: parsed.banker_firm || null,
       stage: 'Reviewing',
       status: 'Active',
       cim_parsed: true,
+      expected_close: new Date().toISOString().split('T')[0],
     }).select().single()
 
     if (error) throw error
@@ -315,9 +338,9 @@ async function handleCIMAttachment(message, attachment) {
     let msg = `✅ **${parsed.company_name}** added to pipeline as **Reviewing**\n\n`
     if (parsed.sector) msg += `📌 Sector: ${parsed.sector}\n`
     if (parsed.geography) msg += `📍 Geography: ${parsed.geography}\n`
-    if (parsed.ebitda) msg += `💰 EBITDA: ${fmt(parsed.ebitda)}\n`
     if (parsed.revenue) msg += `📈 Revenue: ${fmt(parsed.revenue)}\n`
-    if (parsed.asking_price) msg += `🏷️ Asking: ${fmt(parsed.asking_price)}\n`
+    if (parsed.ebitda) msg += `💰 EBITDA: ${fmt(parsed.ebitda)}\n`
+    if (parsed.banker_name) msg += `🏦 Banker: ${parsed.banker_name}${parsed.banker_firm ? ` @ ${parsed.banker_firm}` : ''}\n`
     if (parsed.cim_summary) msg += `\n${parsed.cim_summary}`
 
     await reply.edit(msg.slice(0, 2000))
