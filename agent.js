@@ -100,6 +100,18 @@ const tools = [
     input_schema: { type: 'object', properties: {} },
   },
   {
+    name: 'delete_contact',
+    description: 'Delete a contact from the CRM. Always confirm with the user before deleting.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Name or firm to find the contact' },
+        confirmed: { type: 'boolean', description: 'Must be true — only delete after user explicitly confirms' },
+      },
+      required: ['query', 'confirmed'],
+    },
+  },
+  {
     name: 'update_contact',
     description: 'Update an existing contact — change name, firm, email, phone, title, or type.',
     input_schema: {
@@ -245,6 +257,22 @@ async function executeTool(name, input) {
         return { stage, count: stageDeals.length, total_ebitda: stageDeals.reduce((s, d) => s + (d.ebitda || 0), 0) }
       }).filter(s => s.count > 0)
       return { pipeline: summary, total_deals: deals.length, total_ebitda: deals.reduce((s, d) => s + (d.ebitda || 0), 0) }
+    }
+
+    case 'delete_contact': {
+      if (!input.confirmed) return { error: 'Deletion requires explicit user confirmation' }
+      const { data: contacts } = await supabase.from('contacts')
+        .select('id, first_name, last_name, firm')
+        .or('first_name.ilike.%' + input.query + '%,last_name.ilike.%' + input.query + '%,firm.ilike.%' + input.query + '%')
+        .limit(3)
+      if (!contacts?.length) return { error: 'Contact not found' }
+      if (contacts.length > 1) return { error: 'Multiple contacts found — be more specific', contacts: contacts.map(c => c.first_name + ' ' + c.last_name + (c.firm ? ' @ ' + c.firm : '')) }
+      const c = contacts[0]
+      await supabase.from('contact_deal_links').delete().eq('contact_id', c.id)
+      await supabase.from('interactions').delete().eq('contact_id', c.id)
+      await supabase.from('deal_capital_assignments').delete().eq('contact_id', c.id)
+      await supabase.from('contacts').delete().eq('id', c.id)
+      return { success: true, deleted: c.first_name + ' ' + c.last_name + (c.firm ? ' @ ' + c.firm : '') }
     }
 
     case 'update_contact': {
