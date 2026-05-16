@@ -356,38 +356,38 @@ Return null for anything not explicitly stated.`,
     const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('').replace(/```json|```/g, '').trim()
     const parsed = JSON.parse(text)
 
-    // Check required fields
+    // Always show preview first
+    const pendingId = `${message.author.id}_${Date.now()}`
     const required = [
       { key: 'company_name', label: 'Company Name' },
-      { key: 'sector',       label: 'Sector (e.g. Underground Utilities, Electrical Contracting)' },
-      { key: 'geography',    label: 'Geography (state or region)' },
-      { key: 'deal_type',    label: 'Deal Type (platform / add-on / recap / growth)' },
+      { key: 'sector',       label: 'Sector' },
+      { key: 'geography',    label: 'Geography' },
+      { key: 'deal_type',    label: 'Deal Type (platform/add-on/recap/growth)' },
       { key: 'revenue',      label: 'Revenue in $M (e.g. 18.5)' },
       { key: 'ebitda',       label: 'EBITDA in $M (e.g. 4.2)' },
     ]
     const missing = required.filter(f => !parsed[f.key])
+    pendingDeals.set(pendingId, { parsed, missing, replyMsg: reply, awaitingConfirm: true })
 
+    let msg = '📄 **Parsed: ' + (parsed.company_name || 'Unknown') + '**\n\n'
+    msg += '**Extracted fields:**\n'
+    msg += (parsed.company_name ? '✅' : '❌') + ' Company: ' + (parsed.company_name || 'Missing') + '\n'
+    msg += (parsed.sector       ? '✅' : '❌') + ' Sector: '  + (parsed.sector || 'Missing') + '\n'
+    msg += (parsed.geography    ? '✅' : '❌') + ' Geography: ' + (parsed.geography || 'Missing') + '\n'
+    msg += (parsed.deal_type    ? '✅' : '❌') + ' Deal Type: ' + (parsed.deal_type || 'Missing') + '\n'
+    msg += (parsed.revenue      ? '✅' : '❌') + ' Revenue: ' + (parsed.revenue ? fmt(parsed.revenue) : 'Missing') + '\n'
+    msg += (parsed.ebitda       ? '✅' : '❌') + ' EBITDA: '  + (parsed.ebitda  ? fmt(parsed.ebitda)  : 'Missing') + '\n'
+    if (parsed.banker_name) msg += '🏦 Banker: ' + parsed.banker_name + (parsed.banker_firm ? ' @ ' + parsed.banker_firm : '') + '\n'
+    msg += '\n'
     if (missing.length > 0) {
-      const pendingId = `${message.author.id}_${Date.now()}`
-      pendingDeals.set(pendingId, { parsed, missing: [...missing], replyMsg: reply })
-
-      let msg = `📄 **Parsed: ${parsed.company_name || 'Unknown Company'}**
-
-`
-      msg += `⚠️ **Missing required fields. Please reply with the values below, one per line:**
-
-`
-      missing.forEach((f, i) => { msg += `**${i+1}. ${f.label}**
-` })
-      msg += '\nExample reply:\n' + missing.map(f => (f.key === 'revenue' || f.key === 'ebitda') ? '4.2' : 'Your value here').join('\n')
-      msg += '\n\nType skip to save with missing fields. (Pending ID: ' + pendingId + ')'
-
-      await reply.edit(msg.slice(0, 2000))
-
-      setTimeout(() => pendingDeals.delete(pendingId), 5 * 60 * 1000)
+      msg += '⚠️ **Missing fields - reply with values one per line:**\n'
+      missing.forEach((f, i) => { msg += (i+1) + '. ' + f.label + '\n' })
+      msg += '\nOr reply `save` to save as-is, or `cancel` to discard.'
     } else {
-      await saveDeal(parsed, reply)
+      msg += 'Reply `save` to confirm, or correct any field by replying\nFieldName: New Value\n(e.g. `Sector: Civil / Public Works`)\nReply `cancel` to discard.'
     }
+    await reply.edit(msg.slice(0, 2000))
+    setTimeout(() => pendingDeals.delete(pendingId), 10 * 60 * 1000)
   } catch (err) {
     console.error(err)
     await reply.edit(`❌ Failed to parse CIM: ${err.message}`)
@@ -454,40 +454,72 @@ client.on('messageCreate', async message => {
     for (const [pendingId, pending] of pendingDeals.entries()) {
       if (!pendingId.startsWith(userKey)) continue
 
-      if (message.content.toLowerCase() === 'skip') {
+      const cmd = message.content.trim().toLowerCase()
+
+      if (cmd === 'cancel') {
         pendingDeals.delete(pendingId)
-        try { await saveDeal(pending.parsed, pending.replyMsg) } catch (e) { await pending.replyMsg.edit(`❌ Save failed: ${e.message}`) }
+        await message.reply('❌ Deal discarded.')
         return
       }
 
-      // Parse replies line by line
-      const lines = message.content.trim().split('\n').map(l => l.trim()).filter(Boolean)
-      lines.forEach((line, i) => {
-        if (i >= pending.missing.length) return
-        const field = pending.missing[i]
-        if (field.key === 'revenue' || field.key === 'ebitda') {
-          const num = parseFloat(line.replace(/[^0-9.]/g, ''))
-          if (!isNaN(num)) pending.parsed[field.key] = num * 1_000_000
-        } else {
-          pending.parsed[field.key] = line
-        }
-      })
-
-      // Check if still missing anything
-      const stillMissing = pending.missing.filter(f => !pending.parsed[f.key])
-      if (stillMissing.length > 0) {
-        pending.missing = stillMissing
-        let msg = `Still missing:
-`
-        stillMissing.forEach((f, i) => { msg += `**${i+1}. ${f.label}**
-` })
-        msg += `
-Please reply with the remaining values, one per line.`
-        await message.reply(msg)
-      } else {
+      if (cmd === 'save' || cmd === 'skip') {
         pendingDeals.delete(pendingId)
-        try { await saveDeal(pending.parsed, pending.replyMsg) } catch (e) { await pending.replyMsg.edit(`❌ Save failed: ${e.message}`) }
+        try { await saveDeal(pending.parsed, pending.replyMsg) } catch (e) { await pending.replyMsg.edit('❌ Save failed: ' + e.message) }
+        return
       }
+
+      // Field correction: "Sector: Civil / Public Works"
+      if (message.content.includes(':')) {
+        const colonIdx = message.content.indexOf(':')
+        const fieldRaw = message.content.slice(0, colonIdx).trim().toLowerCase()
+        const value = message.content.slice(colonIdx + 1).trim()
+        const fieldMap = { 'company': 'company_name', 'company name': 'company_name', 'sector': 'sector', 'geography': 'geography', 'location': 'geography', 'deal type': 'deal_type', 'type': 'deal_type', 'revenue': 'revenue', 'ebitda': 'ebitda', 'banker': 'banker_name', 'firm': 'banker_firm' }
+        const fieldKey = fieldMap[fieldRaw]
+        if (fieldKey) {
+          if (fieldKey === 'revenue' || fieldKey === 'ebitda') {
+            const num = parseFloat(value.replace(/[^0-9.]/g, ''))
+            if (!isNaN(num)) pending.parsed[fieldKey] = num >= 1000 ? num : num * 1_000_000
+          } else {
+            pending.parsed[fieldKey] = value
+          }
+          pending.missing = pending.missing.filter(f => f.key !== fieldKey)
+          await message.reply('Updated ' + fieldKey + ' to: ' + value + '\nReply `save` to confirm or continue editing.')
+          return
+        }
+      }
+
+      // Line-by-line for missing fields
+      if (pending.missing.length > 0) {
+        const lines = message.content.trim().split('\n').map(l => l.trim()).filter(Boolean)
+        lines.forEach((line, i) => {
+          if (i >= pending.missing.length) return
+          const field = pending.missing[i]
+          if (field.key === 'revenue' || field.key === 'ebitda') {
+            const num = parseFloat(line.replace(/[^0-9.]/g, ''))
+            if (!isNaN(num)) pending.parsed[field.key] = num >= 1000 ? num : num * 1_000_000
+          } else {
+            pending.parsed[field.key] = line
+          }
+        })
+        pending.missing = pending.missing.filter(f => !pending.parsed[f.key])
+      }
+
+      // Show updated preview
+      let msg = '📄 **Updated: ' + (pending.parsed.company_name || 'Unknown') + '**\n'
+      msg += (pending.parsed.company_name ? '✅' : '❌') + ' Company: ' + (pending.parsed.company_name || 'Missing') + '\n'
+      msg += (pending.parsed.sector       ? '✅' : '❌') + ' Sector: '  + (pending.parsed.sector || 'Missing') + '\n'
+      msg += (pending.parsed.geography    ? '✅' : '❌') + ' Geography: ' + (pending.parsed.geography || 'Missing') + '\n'
+      msg += (pending.parsed.deal_type    ? '✅' : '❌') + ' Deal Type: ' + (pending.parsed.deal_type || 'Missing') + '\n'
+      msg += (pending.parsed.revenue      ? '✅' : '❌') + ' Revenue: ' + (pending.parsed.revenue ? fmt(pending.parsed.revenue) : 'Missing') + '\n'
+      msg += (pending.parsed.ebitda       ? '✅' : '❌') + ' EBITDA: '  + (pending.parsed.ebitda ? fmt(pending.parsed.ebitda) : 'Missing') + '\n'
+      if (pending.missing.length > 0) {
+        msg += '\n⚠️ Still missing:\n'
+        pending.missing.forEach((f, i) => { msg += (i+1) + '. ' + f.label + '\n' })
+        msg += 'Reply with values, or `save` to save as-is, or `cancel`.'
+      } else {
+        msg += '\n✅ All complete! Reply `save` to confirm or `cancel` to discard.'
+      }
+      await message.reply(msg.slice(0, 2000))
       return
     }
   }
