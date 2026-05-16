@@ -1,6 +1,7 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js')
 const { createClient } = require('@supabase/supabase-js')
 const Anthropic = require('@anthropic-ai/sdk')
+const { handleAgentMessage } = require('./agent')
 const fetch = require('node-fetch')
 const { FormData } = require('formdata-node')
 const fs = require('fs')
@@ -733,6 +734,12 @@ client.on('messageCreate', async message => {
     for (const attachment of message.attachments.values()) {
       await handleCIMAttachment(message, attachment)
     }
+  }
+
+  // Handle conversational agent in #crm-assistant channel
+  const agentChannel = process.env.DISCORD_AGENT_CHANNEL || 'crm-assistant'
+  if (message.channel.name?.includes(agentChannel) && !message.attachments.size) {
+    await handleAgentMessage(message)
   }
 })
 
