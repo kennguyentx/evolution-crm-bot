@@ -100,6 +100,30 @@ const tools = [
     input_schema: { type: 'object', properties: {} },
   },
   {
+    name: 'update_contact',
+    description: 'Update an existing contact — change name, firm, email, phone, title, or type.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query:        { type: 'string', description: 'Name or firm to find the contact' },
+        updates: {
+          type: 'object',
+          properties: {
+            first_name:   { type: 'string' },
+            last_name:    { type: 'string' },
+            firm:         { type: 'string' },
+            title:        { type: 'string' },
+            email:        { type: 'string' },
+            phone:        { type: 'string' },
+            contact_type: { type: 'string' },
+            notes:        { type: 'string' },
+          },
+        },
+      },
+      required: ['query', 'updates'],
+    },
+  },
+  {
     name: 'create_contact',
     description: 'Create a new contact in the CRM. Use when a banker or other contact is not found in the database and the user provides their details.',
     input_schema: {
@@ -221,6 +245,20 @@ async function executeTool(name, input) {
         return { stage, count: stageDeals.length, total_ebitda: stageDeals.reduce((s, d) => s + (d.ebitda || 0), 0) }
       }).filter(s => s.count > 0)
       return { pipeline: summary, total_deals: deals.length, total_ebitda: deals.reduce((s, d) => s + (d.ebitda || 0), 0) }
+    }
+
+    case 'update_contact': {
+      const q = input.query
+      const parts = q.split(' ').filter(Boolean)
+      let { data: contacts } = await supabase.from('contacts')
+        .select('id, first_name, last_name, firm')
+        .or('first_name.ilike.%' + q + '%,last_name.ilike.%' + q + '%,firm.ilike.%' + q + '%')
+        .limit(3)
+      if (!contacts?.length) return { error: 'Contact not found for: ' + q }
+      if (contacts.length > 1) return { error: 'Multiple contacts found', contacts: contacts.map(c => c.first_name + ' ' + c.last_name + (c.firm ? ' @ ' + c.firm : '')) }
+      const { error } = await supabase.from('contacts').update(input.updates).eq('id', contacts[0].id)
+      if (error) return { error: error.message }
+      return { success: true, name: contacts[0].first_name + ' ' + contacts[0].last_name, updated: input.updates }
     }
 
     case 'create_contact': {
