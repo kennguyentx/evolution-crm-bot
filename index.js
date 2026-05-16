@@ -356,6 +356,23 @@ Return null for anything not explicitly stated.`,
     const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('').replace(/```json|```/g, '').trim()
     const parsed = JSON.parse(text)
 
+    // Check for duplicate deals
+    if (parsed.company_name) {
+      const { data: existing } = await supabase
+        .from('deals')
+        .select('id, company_name, stage, status, created_at')
+        .ilike('company_name', `%${parsed.company_name}%`)
+        .limit(3)
+      if (existing && existing.length > 0) {
+        let dupMsg = `⚠️ **Possible duplicate detected!** Found ${existing.length} similar deal(s):\n\n`
+        existing.forEach(d => {
+          dupMsg += `• **${d.company_name}** — ${d.stage} (${d.status})\n`
+        })
+        dupMsg += `\nThis may be the same company. The new deal will still be shown for review below.`
+        await message.reply(dupMsg.slice(0, 2000))
+      }
+    }
+
     // Always show preview first
     const pendingId = `${message.author.id}_${Date.now()}`
     const required = [
