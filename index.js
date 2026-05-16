@@ -274,36 +274,76 @@ async function handleLog(interaction) {
 // ─────────────────────────────────────────────────
 // CIM ATTACHMENT HANDLER
 // ─────────────────────────────────────────────────
+
+// Store pending deals waiting for missing field input
+const pendingDeals = new Map()
+
+async function saveDeal(parsed, replyMsg) {
+  const { data, error } = await supabase.from('deals').insert({
+    company_name:   parsed.company_name || 'Unknown',
+    sector:         parsed.sector || null,
+    geography:      parsed.geography || null,
+    deal_type:      parsed.deal_type || 'platform',
+    revenue:        parsed.revenue || null,
+    ebitda:         parsed.ebitda || null,
+    description:    parsed.cim_summary || null,
+    cim_summary:    parsed.cim_summary || null,
+    source_notes:   parsed.banker_firm || null,
+    stage:          'Reviewing',
+    status:         'Active',
+    cim_parsed:     true,
+    expected_close: new Date().toISOString().split('T')[0],
+  }).select().single()
+
+  if (error) throw new Error(error.message)
+
+  let msg = `✅ **${parsed.company_name}** saved to pipeline as **Reviewing**
+
+`
+  if (parsed.sector)      msg += `📌 ${parsed.sector}
+`
+  if (parsed.geography)   msg += `📍 ${parsed.geography}
+`
+  if (parsed.revenue)     msg += `📈 Revenue: ${fmt(parsed.revenue)}
+`
+  if (parsed.ebitda)      msg += `💰 EBITDA: ${fmt(parsed.ebitda)}
+`
+  if (parsed.banker_name) msg += `🏦 ${parsed.banker_name}${parsed.banker_firm ? ` @ ${parsed.banker_firm}` : ''}
+`
+  if (parsed.cim_summary) msg += `
+${parsed.cim_summary}`
+
+  await replyMsg.edit(msg.slice(0, 2000))
+  return data
+}
+
 async function handleCIMAttachment(message, attachment) {
   if (!attachment.name.toLowerCase().endsWith('.pdf')) return
 
   const reply = await message.reply('📄 Parsing CIM with Claude...')
 
   try {
-    // Download PDF
     const res = await fetch(attachment.url)
     const buffer = await res.buffer()
     const base64 = buffer.toString('base64')
 
-    // Parse with Claude
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1200,
       system: `You extract factual deal data from teasers and CIMs. Return ONLY valid JSON, no markdown, no opinions.
 
-{
-  "company_name": "exact company name as stated",
-  "sector": "one of: Underground Utilities | Electrical Contracting | Civil / Public Works | Commercial Landscaping | Fiber Optics | HVAC | Plumbing | Industrial Services | Environmental Services | Construction & Engineering | Other",
-  "geography": "primary state(s) or region as stated",
-  "deal_type": "one of: platform | add-on | recap | growth",
-  "revenue": "number in raw dollars or null",
-  "ebitda": "number in raw dollars or null",
-  "cim_summary": "3-5 factual sentences about what company does, where it operates, financial profile, and transaction context. No opinions or qualitative words like attractive or compelling.",
-  "banker_name": "full name of banker/broker or null",
-  "banker_firm": "investment bank or advisory firm name or null"
-}
+Fields:
+- company_name: exact company name
+- sector: one of: Underground Utilities | Electrical Contracting | Civil / Public Works | Commercial Landscaping | Fiber Optics | HVAC | Plumbing | Industrial Services | Environmental Services | Construction & Engineering | Other
+- geography: primary state(s) or region as stated
+- deal_type: one of: platform | add-on | recap | growth
+- revenue: number in raw dollars or null (4200000 for $4.2M)
+- ebitda: number in raw dollars or null
+- cim_summary: 3-5 factual sentences about what company does, where it operates, financial profile, transaction context. No opinions or qualitative words.
+- banker_name: full name of banker or null
+- banker_firm: advisory firm name or null
 
-Dollar values as raw numbers (4200000 for $4.2M). Return null for anything not explicitly stated.`,
+Return null for anything not explicitly stated.`,
       messages: [{
         role: 'user',
         content: [
@@ -316,40 +356,53 @@ Dollar values as raw numbers (4200000 for $4.2M). Return null for anything not e
     const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('').replace(/```json|```/g, '').trim()
     const parsed = JSON.parse(text)
 
-    // Save to Supabase
-    const { data, error } = await supabase.from('deals').insert({
-      company_name: parsed.company_name || 'Unknown',
-      sector: parsed.sector || null,
-      geography: parsed.geography || null,
-      deal_type: parsed.deal_type || 'platform',
-      revenue: parsed.revenue || null,
-      ebitda: parsed.ebitda || null,
-      description: parsed.cim_summary || null,
-      cim_summary: parsed.cim_summary || null,
-      source_notes: parsed.banker_firm || null,
-      stage: 'Reviewing',
-      status: 'Active',
-      cim_parsed: true,
-      expected_close: new Date().toISOString().split('T')[0],
-    }).select().single()
+    // Check required fields
+    const required = [
+      { key: 'company_name', label: 'Company Name' },
+      { key: 'sector',       label: 'Sector (e.g. Underground Utilities, Electrical Contracting)' },
+      { key: 'geography',    label: 'Geography (state or region)' },
+      { key: 'deal_type',    label: 'Deal Type (platform / add-on / recap / growth)' },
+      { key: 'revenue',      label: 'Revenue in $M (e.g. 18.5)' },
+      { key: 'ebitda',       label: 'EBITDA in $M (e.g. 4.2)' },
+    ]
+    const missing = required.filter(f => !parsed[f.key])
 
-    if (error) throw error
+    if (missing.length > 0) {
+      const pendingId = `${message.author.id}_${Date.now()}`
+      pendingDeals.set(pendingId, { parsed, missing: [...missing], replyMsg: reply })
 
-    let msg = `✅ **${parsed.company_name}** added to pipeline as **Reviewing**\n\n`
-    if (parsed.sector) msg += `📌 Sector: ${parsed.sector}\n`
-    if (parsed.geography) msg += `📍 Geography: ${parsed.geography}\n`
-    if (parsed.revenue) msg += `📈 Revenue: ${fmt(parsed.revenue)}\n`
-    if (parsed.ebitda) msg += `💰 EBITDA: ${fmt(parsed.ebitda)}\n`
-    if (parsed.banker_name) msg += `🏦 Banker: ${parsed.banker_name}${parsed.banker_firm ? ` @ ${parsed.banker_firm}` : ''}\n`
-    if (parsed.cim_summary) msg += `\n${parsed.cim_summary}`
+      let msg = `📄 **Parsed: ${parsed.company_name || 'Unknown Company'}**
 
-    await reply.edit(msg.slice(0, 2000))
+`
+      msg += `⚠️ **Missing required fields. Please reply with the values below, one per line:**
+
+`
+      missing.forEach((f, i) => { msg += `**${i+1}. ${f.label}**
+` })
+      msg += `
+Example reply:
+`
+      msg += '```
+'
+      msg += missing.map(f => f.key === 'revenue' || f.key === 'ebitda' ? '4.2' : 'Your answer here').join('
+')
+      msg += '
+```'
+      msg += `
+
+Type \`skip\` to save with missing fields. _(Pending ID: \`${pendingId}\`)_`
+
+      await reply.edit(msg.slice(0, 2000))
+
+      setTimeout(() => pendingDeals.delete(pendingId), 5 * 60 * 1000)
+    } else {
+      await saveDeal(parsed, reply)
+    }
   } catch (err) {
     console.error(err)
     await reply.edit(`❌ Failed to parse CIM: ${err.message}`)
   }
 }
-
 // ─────────────────────────────────────────────────
 // BOT SETUP
 // ─────────────────────────────────────────────────
@@ -398,14 +451,63 @@ client.on('interactionCreate', async interaction => {
   }
 })
 
-// Handle CIM uploads in #deal-intake channel
+// Handle CIM uploads and missing field replies
 client.on('messageCreate', async message => {
   if (message.author.bot) return
   const intakeChannel = process.env.DISCORD_INTAKE_CHANNEL || 'deal-intake'
-  if (!message.channel.name?.includes(intakeChannel)) return
+  const inIntakeChannel = message.channel.name?.includes(intakeChannel)
 
-  for (const attachment of message.attachments.values()) {
-    await handleCIMAttachment(message, attachment)
+  // Check if this is a reply to a pending deal prompt
+  if (inIntakeChannel && !message.attachments.size) {
+    const userKey = `${message.author.id}_`
+    // Find any pending deal for this user
+    for (const [pendingId, pending] of pendingDeals.entries()) {
+      if (!pendingId.startsWith(userKey)) continue
+
+      if (message.content.toLowerCase() === 'skip') {
+        pendingDeals.delete(pendingId)
+        try { await saveDeal(pending.parsed, pending.replyMsg) } catch (e) { await pending.replyMsg.edit(`❌ Save failed: ${e.message}`) }
+        return
+      }
+
+      // Parse replies line by line
+      const lines = message.content.trim().split('
+').map(l => l.trim()).filter(Boolean)
+      lines.forEach((line, i) => {
+        if (i >= pending.missing.length) return
+        const field = pending.missing[i]
+        if (field.key === 'revenue' || field.key === 'ebitda') {
+          const num = parseFloat(line.replace(/[^0-9.]/g, ''))
+          if (!isNaN(num)) pending.parsed[field.key] = num * 1_000_000
+        } else {
+          pending.parsed[field.key] = line
+        }
+      })
+
+      // Check if still missing anything
+      const stillMissing = pending.missing.filter(f => !pending.parsed[f.key])
+      if (stillMissing.length > 0) {
+        pending.missing = stillMissing
+        let msg = `Still missing:
+`
+        stillMissing.forEach((f, i) => { msg += `**${i+1}. ${f.label}**
+` })
+        msg += `
+Please reply with the remaining values, one per line.`
+        await message.reply(msg)
+      } else {
+        pendingDeals.delete(pendingId)
+        try { await saveDeal(pending.parsed, pending.replyMsg) } catch (e) { await pending.replyMsg.edit(`❌ Save failed: ${e.message}`) }
+      }
+      return
+    }
+  }
+
+  // Handle PDF attachments in intake channel
+  if (inIntakeChannel) {
+    for (const attachment of message.attachments.values()) {
+      await handleCIMAttachment(message, attachment)
+    }
   }
 })
 
