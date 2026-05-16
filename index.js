@@ -289,7 +289,7 @@ async function saveDeal(parsed, replyMsg) {
     description:    parsed.cim_summary || null,
     cim_summary:    parsed.cim_summary || null,
     source_notes:   parsed.banker_firm || null,
-    stage:          'Teaser',
+    stage:          'Reviewing',
     status:         'Active',
     cim_parsed:     true,
     expected_close: new Date().toISOString().split('T')[0],
@@ -379,18 +379,8 @@ Return null for anything not explicitly stated.`,
 `
       missing.forEach((f, i) => { msg += `**${i+1}. ${f.label}**
 ` })
-      msg += `
-Example reply:
-`
-      msg += '```
-'
-      msg += missing.map(f => f.key === 'revenue' || f.key === 'ebitda' ? '4.2' : 'Your answer here').join('
-')
-      msg += '
-```'
-      msg += `
-
-Type \`skip\` to save with missing fields. _(Pending ID: \`${pendingId}\`)_`
+      msg += '\nExample reply:\n' + missing.map(f => (f.key === 'revenue' || f.key === 'ebitda') ? '4.2' : 'Your value here').join('\n')
+      msg += '\n\nType skip to save with missing fields. (Pending ID: ' + pendingId + ')'
 
       await reply.edit(msg.slice(0, 2000))
 
@@ -471,8 +461,7 @@ client.on('messageCreate', async message => {
       }
 
       // Parse replies line by line
-      const lines = message.content.trim().split('
-').map(l => l.trim()).filter(Boolean)
+      const lines = message.content.trim().split('\n').map(l => l.trim()).filter(Boolean)
       lines.forEach((line, i) => {
         if (i >= pending.missing.length) return
         const field = pending.missing[i]
