@@ -289,7 +289,7 @@ async function saveDeal(parsed, replyMsg) {
     description:    parsed.cim_summary || null,
     cim_summary:    parsed.cim_summary || null,
     source_notes:   parsed.banker_firm || null,
-    stage:          'Reviewing',
+    stage:          'Teaser',
     status:         'Active',
     cim_parsed:     true,
     expected_close: new Date().toISOString().split('T')[0],
