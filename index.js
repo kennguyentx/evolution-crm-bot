@@ -25,6 +25,11 @@ const commands = [
       .addStringOption(opt => opt.setName('stage').setDescription('Filter by stage').setRequired(false))
     )
     .addSubcommand(sub => sub
+      .setName('search')
+      .setDescription('Search all deals by company name (including past/dead deals)')
+      .addStringOption(opt => opt.setName('company').setDescription('Company name to search').setRequired(true))
+    )
+    .addSubcommand(sub => sub
       .setName('update')
       .setDescription('Update deal stage')
       .addStringOption(opt => opt.setName('company').setDescription('Company name').setRequired(true))
@@ -120,6 +125,44 @@ async function findDeal(company) {
 // ─────────────────────────────────────────────────
 // COMMAND HANDLERS
 // ─────────────────────────────────────────────────
+async function handleDealSearch(interaction) {
+  const company = interaction.options.getString('company')
+
+  const { data: deals } = await supabase
+    .from('deals')
+    .select('id, company_name, stage, status, ebitda, revenue, sector, geography, sourced_date, source_notes, pass_reason, notes')
+    .ilike('company_name', `%${company}%`)
+    .order('sourced_date', { ascending: false })
+
+  if (!deals || deals.length === 0) {
+    return interaction.reply({ content: `🔍 No deals found matching "${company}"`, ephemeral: true })
+  }
+
+  let msg = `🔍 **Search results for "${company}"** — ${deals.length} deal(s) found\n\n`
+
+  deals.forEach(d => {
+    const emoji = d.status === 'Closed' ? '✅' : d.status === 'Dead' ? '❌' : '🔄'
+    msg += `${emoji} **${d.company_name}** — \`${d.stage}\` (${d.status})\n`
+    if (d.sector) msg += `  📌 ${d.sector}${d.geography ? ' · ' + d.geography : ''}\n`
+    if (d.ebitda || d.revenue) {
+      const fin = []
+      if (d.revenue) fin.push('Rev: ' + fmt(d.revenue))
+      if (d.ebitda)  fin.push('EBITDA: ' + fmt(d.ebitda))
+      msg += `  💰 ${fin.join(' · ')}\n`
+    }
+    if (d.source_notes) msg += `  🏦 ${d.source_notes}\n`
+    if (d.sourced_date) msg += `  📅 Sourced: ${new Date(d.sourced_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}\n`
+    if (d.pass_reason)  msg += `  ⚠️ Pass reason: ${d.pass_reason}\n`
+    if (d.notes && d.status === 'Dead') {
+      const shortNote = d.notes.replace(/SF Stage:.*|Fiscal Period:.*/g, '').trim().slice(0, 120)
+      if (shortNote) msg += `  📝 ${shortNote}\n`
+    }
+    msg += '\n'
+  })
+
+  await interaction.reply({ content: msg.slice(0, 2000), ephemeral: true })
+}
+
 async function handleDealList(interaction) {
   const stageFilter = interaction.options.getString('stage')
 
@@ -289,7 +332,7 @@ async function saveDeal(parsed, replyMsg) {
     description:    parsed.cim_summary || null,
     cim_summary:    parsed.cim_summary || null,
     source_notes:   parsed.banker_firm || null,
-    stage:          'Reviewing',
+    stage:          'Teaser',
     status:         'Active',
     cim_parsed:     true,
     expected_close: new Date().toISOString().split('T')[0],
@@ -297,21 +340,21 @@ async function saveDeal(parsed, replyMsg) {
 
   if (error) throw new Error(error.message)
 
-  let msg = `✅ **${parsed.company_name}** saved to pipeline as **Reviewing**
+  // Link selected contact if provided
+  let contactNote = ''
+  if (parsed.selectedContact && data) {
+    const c = parsed.selectedContact
+    await supabase.from('contact_deal_links').insert({ contact_id: c.id, deal_id: data.id, role: 'Source / Banker' })
+    contactNote = ' ✅ linked to ' + c.first_name + ' ' + c.last_name
+  }
 
-`
-  if (parsed.sector)      msg += `📌 ${parsed.sector}
-`
-  if (parsed.geography)   msg += `📍 ${parsed.geography}
-`
-  if (parsed.revenue)     msg += `📈 Revenue: ${fmt(parsed.revenue)}
-`
-  if (parsed.ebitda)      msg += `💰 EBITDA: ${fmt(parsed.ebitda)}
-`
-  if (parsed.banker_name) msg += `🏦 ${parsed.banker_name}${parsed.banker_firm ? ` @ ${parsed.banker_firm}` : ''}
-`
-  if (parsed.cim_summary) msg += `
-${parsed.cim_summary}`
+  let msg = '✅ **' + (parsed.company_name || 'Unknown') + '** saved to pipeline as **Teaser**\n\n'
+  if (parsed.sector)      msg += '📌 ' + parsed.sector + '\n'
+  if (parsed.geography)   msg += '📍 ' + parsed.geography + '\n'
+  if (parsed.revenue)     msg += '📈 Revenue: ' + fmt(parsed.revenue) + '\n'
+  if (parsed.ebitda)      msg += '💰 EBITDA: ' + fmt(parsed.ebitda) + '\n'
+  if (parsed.banker_name) msg += '🏦 ' + parsed.banker_name + (parsed.banker_firm ? ' @ ' + parsed.banker_firm : '') + contactNote + '\n'
+  if (parsed.cim_summary) msg += '\n' + parsed.cim_summary
 
   await replyMsg.edit(msg.slice(0, 2000))
   return data
@@ -377,14 +420,14 @@ Return null for anything not explicitly stated.`,
     const pendingId = `${message.author.id}_${Date.now()}`
     const required = [
       { key: 'company_name', label: 'Company Name' },
-      { key: 'sector',       label: 'Sector' },
-      { key: 'geography',    label: 'Geography' },
-      { key: 'deal_type',    label: 'Deal Type (platform/add-on/recap/growth)' },
+      { key: 'sector',       label: 'Sector (e.g. Underground Utilities, Electrical Contracting)' },
+      { key: 'geography',    label: 'Geography (state or region)' },
+      { key: 'deal_type',    label: 'Deal Type (platform / add-on / recap / growth)' },
       { key: 'revenue',      label: 'Revenue in $M (e.g. 18.5)' },
       { key: 'ebitda',       label: 'EBITDA in $M (e.g. 4.2)' },
     ]
     const missing = required.filter(f => !parsed[f.key])
-    pendingDeals.set(pendingId, { parsed, missing, replyMsg: reply, awaitingConfirm: true })
+    pendingDeals.set(pendingId, { parsed, missing, replyMsg: reply, awaitingConfirm: true, bankerStep: null, bankerResults: null, newContact: null })
 
     let msg = '📄 **Parsed: ' + (parsed.company_name || 'Unknown') + '**\n\n'
     msg += '**Extracted fields:**\n'
@@ -394,7 +437,7 @@ Return null for anything not explicitly stated.`,
     msg += (parsed.deal_type    ? '✅' : '❌') + ' Deal Type: ' + (parsed.deal_type || 'Missing') + '\n'
     msg += (parsed.revenue      ? '✅' : '❌') + ' Revenue: ' + (parsed.revenue ? fmt(parsed.revenue) : 'Missing') + '\n'
     msg += (parsed.ebitda       ? '✅' : '❌') + ' EBITDA: '  + (parsed.ebitda  ? fmt(parsed.ebitda)  : 'Missing') + '\n'
-    if (parsed.banker_name) msg += '🏦 Banker: ' + parsed.banker_name + (parsed.banker_firm ? ' @ ' + parsed.banker_firm : '') + '\n'
+    msg += (parsed.banker_name ? '✅' : '❌') + ' Banker: ' + (parsed.banker_name ? parsed.banker_name + (parsed.banker_firm ? ' @ ' + parsed.banker_firm : '') : 'Missing') + '\n'
     msg += '\n'
     if (missing.length > 0) {
       msg += '⚠️ **Missing fields - reply with values one per line:**\n'
@@ -440,6 +483,7 @@ client.on('interactionCreate', async interaction => {
   try {
     if (interaction.commandName === 'deal') {
       if (sub === 'list') await handleDealList(interaction)
+      else if (sub === 'search') await handleDealSearch(interaction)
       else if (sub === 'update') await handleDealUpdate(interaction)
       else if (sub === 'view') await handleDealView(interaction)
     } else if (interaction.commandName === 'contact') {
@@ -480,8 +524,135 @@ client.on('messageCreate', async message => {
       }
 
       if (cmd === 'save' || cmd === 'skip') {
+        // Start banker search flow before saving
+        if (!pending.bankerStep && cmd !== 'skip') {
+          pending.bankerStep = 'search'
+          const bankerHint = pending.parsed.banker_name ? ' (AI extracted: ' + pending.parsed.banker_name + (pending.parsed.banker_firm ? ' @ ' + pending.parsed.banker_firm : '') + ')' : ''
+          await message.reply('🏦 **Who is the source banker/contact?**' + bankerHint + '\nType a name or firm to search your contacts DB, or type `skip` to save without linking a contact.')
+          return
+        }
         pendingDeals.delete(pendingId)
         try { await saveDeal(pending.parsed, pending.replyMsg) } catch (e) { await pending.replyMsg.edit('❌ Save failed: ' + e.message) }
+        return
+      }
+
+      // Banker search flow
+      if (pending.bankerStep === 'search') {
+        if (cmd === 'skip') {
+          pending.bankerStep = null
+          pendingDeals.delete(pendingId)
+          try { await saveDeal(pending.parsed, pending.replyMsg) } catch (e) { await pending.replyMsg.edit('❌ Save failed: ' + e.message) }
+          return
+        }
+        // Search contacts by name and firm
+        const q = message.content.trim()
+        const parts = q.split(' ').filter(Boolean)
+        let contacts = []
+        if (parts.length >= 2) {
+          const { data: nameResults } = await supabase.from('contacts')
+            .select('id, first_name, last_name, firm, title, contact_type')
+            .ilike('first_name', '%' + parts[0] + '%')
+            .ilike('last_name', '%' + parts[parts.length-1] + '%')
+            .limit(5)
+          contacts = nameResults || []
+        }
+        if (contacts.length === 0) {
+          const { data: anyResults } = await supabase.from('contacts')
+            .select('id, first_name, last_name, firm, title, contact_type')
+            .or('first_name.ilike.%' + q + '%,last_name.ilike.%' + q + '%,firm.ilike.%' + q + '%')
+            .limit(5)
+          contacts = anyResults || []
+        }
+        pending.bankerResults = contacts
+        if (contacts.length === 0) {
+          pending.bankerStep = 'new'
+          pending.newContact = { first_name: parts[0] || '', last_name: parts.slice(1).join(' ') || '', firm: pending.parsed.banker_firm || '', email: '', phone: '' }
+          let msg = '❌ **No contacts found for "' + q + '"**\n\nAdd as new contact? Reply with their details:\n'
+          msg += '1. First name: ' + (pending.newContact.first_name || '?') + '\n'
+          msg += '2. Last name: ' + (pending.newContact.last_name || '?') + '\n'
+          msg += '3. Firm: ' + (pending.newContact.firm || '?') + '\n'
+          msg += '4. Email (optional)\n\n'
+          msg += 'Reply with corrections line by line, or type `confirm` to save as shown, or `skip` to save deal without a contact.'
+          await message.reply(msg)
+        } else {
+          pending.bankerStep = 'pick'
+          let msg = '🔍 **Found ' + contacts.length + ' contact(s):**\n\n'
+          contacts.forEach((c, i) => { msg += (i+1) + '. **' + c.first_name + ' ' + c.last_name + '**' + (c.firm ? ' @ ' + c.firm : '') + (c.title ? ' — ' + c.title : '') + '\n' })
+          msg += '\nReply with the number to select, `new` to add a new contact, or `skip` to save without linking.'
+          await message.reply(msg)
+        }
+        return
+      }
+
+      // Banker pick from results
+      if (pending.bankerStep === 'pick') {
+        if (cmd === 'skip') {
+          pending.bankerStep = null
+          pendingDeals.delete(pendingId)
+          try { await saveDeal(pending.parsed, pending.replyMsg) } catch (e) { await pending.replyMsg.edit('❌ Save failed: ' + e.message) }
+          return
+        }
+        if (cmd === 'new') {
+          pending.bankerStep = 'new'
+          pending.newContact = { first_name: '', last_name: '', firm: pending.parsed.banker_firm || '', email: '', phone: '' }
+          await message.reply('Add new contact:\n1. First name\n2. Last name\n3. Firm: ' + (pending.newContact.firm || '?') + '\n4. Email (optional)\n\nReply with values line by line, or `confirm` to save as-is.')
+          return
+        }
+        const num = parseInt(cmd)
+        if (num >= 1 && num <= (pending.bankerResults || []).length) {
+          pending.parsed.selectedContact = pending.bankerResults[num-1]
+          pending.bankerStep = null
+          pendingDeals.delete(pendingId)
+          try { await saveDeal(pending.parsed, pending.replyMsg) } catch (e) { await pending.replyMsg.edit('❌ Save failed: ' + e.message) }
+          return
+        }
+        // If they typed something else, re-search
+        pending.bankerStep = 'search'
+        await message.reply('Search again with: ' + message.content)
+        // re-trigger search
+        return
+      }
+
+      // New contact entry
+      if (pending.bankerStep === 'new') {
+        if (cmd === 'skip') {
+          pending.bankerStep = null
+          pendingDeals.delete(pendingId)
+          try { await saveDeal(pending.parsed, pending.replyMsg) } catch (e) { await pending.replyMsg.edit('❌ Save failed: ' + e.message) }
+          return
+        }
+        if (cmd === 'confirm') {
+          // Create contact and link
+          const nc = pending.newContact
+          if (!nc.first_name || !nc.last_name) {
+            await message.reply('❌ First and last name are required. Please provide them.')
+            return
+          }
+          const { data: newC } = await supabase.from('contacts').insert({
+            first_name: nc.first_name, last_name: nc.last_name,
+            firm: nc.firm || null, email: nc.email || null, phone: nc.phone || null,
+            contact_type: 'banker', sub_type: 'M&A banker / intermediary', relationship_strength: 'Cold',
+          }).select().single()
+          if (newC) pending.parsed.selectedContact = newC
+          pending.bankerStep = null
+          pendingDeals.delete(pendingId)
+          try { await saveDeal(pending.parsed, pending.replyMsg) } catch (e) { await pending.replyMsg.edit('❌ Save failed: ' + e.message) }
+          return
+        }
+        // Update new contact fields line by line
+        const lines = message.content.trim().split('\n').map(l => l.trim()).filter(Boolean)
+        if (lines[0]) pending.newContact.first_name = lines[0]
+        if (lines[1]) pending.newContact.last_name = lines[1]
+        if (lines[2]) pending.newContact.firm = lines[2]
+        if (lines[3]) pending.newContact.email = lines[3]
+        const nc = pending.newContact
+        let msg = '📝 **New contact preview:**\n'
+        msg += 'First: ' + (nc.first_name || '❌ missing') + '\n'
+        msg += 'Last: ' + (nc.last_name || '❌ missing') + '\n'
+        msg += 'Firm: ' + (nc.firm || '—') + '\n'
+        msg += 'Email: ' + (nc.email || '—') + '\n\n'
+        msg += 'Reply `confirm` to create and link, or correct fields above.'
+        await message.reply(msg)
         return
       }
 
