@@ -100,6 +100,44 @@ const tools = [
     input_schema: { type: 'object', properties: {} },
   },
   {
+    name: 'create_contact',
+    description: 'Create a new contact in the CRM. Use when a banker or other contact is not found in the database and the user provides their details.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        first_name:   { type: 'string' },
+        last_name:    { type: 'string' },
+        firm:         { type: 'string' },
+        title:        { type: 'string' },
+        email:        { type: 'string' },
+        phone:        { type: 'string' },
+        contact_type: { type: 'string', description: 'banker, lp, lender, advisor, management, other' },
+        deal_id:      { type: 'string', description: 'If provided, link this contact to a deal as Source / Banker' },
+      },
+      required: ['first_name', 'last_name'],
+    },
+  },
+  {
+    name: 'create_deal',
+    description: 'Create a new deal in the CRM. Use when someone describes a new company or opportunity to add to the pipeline.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        company_name:  { type: 'string', description: 'Company name' },
+        sector:        { type: 'string', description: 'Sector' },
+        geography:     { type: 'string', description: 'State or region' },
+        deal_type:     { type: 'string', description: 'platform, add-on, recap, or growth' },
+        revenue:       { type: 'number', description: 'Annual revenue in dollars' },
+        ebitda:        { type: 'number', description: 'Annual EBITDA in dollars' },
+        stage:         { type: 'string', description: 'Stage — defaults to Teaser' },
+        description:   { type: 'string', description: 'Brief description of the business' },
+        banker_name:   { type: 'string', description: 'Full name of the source banker or contact' },
+        banker_firm:   { type: 'string', description: 'Firm name of the source banker' },
+      },
+      required: ['company_name'],
+    },
+  },
+  {
     name: 'get_deal_contacts',
     description: 'Get all contacts linked to a specific deal.',
     input_schema: {
@@ -185,6 +223,68 @@ async function executeTool(name, input) {
       return { pipeline: summary, total_deals: deals.length, total_ebitda: deals.reduce((s, d) => s + (d.ebitda || 0), 0) }
     }
 
+    case 'create_contact': {
+      const { data: contact, error } = await supabase.from('contacts').insert({
+        first_name:   input.first_name,
+        last_name:    input.last_name,
+        firm:         input.firm || null,
+        title:        input.title || null,
+        email:        input.email || null,
+        phone:        input.phone || null,
+        contact_type: input.contact_type || 'banker',
+        sub_type:     input.contact_type === 'banker' ? 'M&A banker / intermediary' : null,
+      }).select().single()
+      if (error) return { error: error.message }
+      if (input.deal_id && contact) {
+        await supabase.from('contact_deal_links').insert({ contact_id: contact.id, deal_id: input.deal_id, role: 'Source / Banker' })
+      }
+      return { success: true, contact_id: contact.id, name: contact.first_name + ' ' + contact.last_name, firm: contact.firm }
+    }
+
+    case 'create_deal': {
+      // Insert deal
+      const { data: deal, error } = await supabase.from('deals').insert({
+        company_name:   input.company_name,
+        sector:         input.sector || null,
+        geography:      input.geography || null,
+        deal_type:      input.deal_type || 'platform',
+        revenue:        input.revenue || null,
+        ebitda:         input.ebitda || null,
+        stage:          input.stage || 'Teaser',
+        status:         'Active',
+        description:    input.description || null,
+        source_notes:   input.banker_firm || null,
+        expected_close: new Date().toISOString().split('T')[0],
+      }).select().single()
+      if (error) return { error: error.message }
+
+      // Try to link banker by name + firm
+      let contactLinked = null
+      if (input.banker_name) {
+        const parts = input.banker_name.split(' ').filter(Boolean)
+        const first = parts[0] || ''
+        const last = parts[parts.length-1] || ''
+        let { data: contacts } = await supabase.from('contacts')
+          .select('id, first_name, last_name, firm')
+          .ilike('first_name', '%' + first + '%')
+          .ilike('last_name', '%' + last + '%')
+          .limit(3)
+        if ((!contacts || !contacts.length) && input.banker_firm) {
+          const { data: firmContacts } = await supabase.from('contacts')
+            .select('id, first_name, last_name, firm')
+            .ilike('firm', '%' + input.banker_firm + '%')
+            .limit(3)
+          contacts = firmContacts
+        }
+        if (contacts && contacts.length === 1) {
+          await supabase.from('contact_deal_links').insert({ contact_id: contacts[0].id, deal_id: deal.id, role: 'Source / Banker' })
+          contactLinked = contacts[0].first_name + ' ' + contacts[0].last_name
+        }
+      }
+      const contactNotFound = input.banker_name && !contactLinked
+      return { success: true, deal_id: deal.id, company_name: deal.company_name, stage: deal.stage, contact_linked: contactLinked, contact_not_found: contactNotFound, banker_name: input.banker_name, banker_firm: input.banker_firm }
+    }
+
     case 'get_deal_contacts': {
       const { data: deals } = await supabase.from('deals').select('id, company_name').ilike('company_name', `%${input.company_name}%`).limit(1)
       if (!deals?.length) return { error: 'Deal not found' }
@@ -222,6 +322,8 @@ async function handleAgentMessage(message) {
 You have direct access to the firm's deal CRM. You can search deals, view deal details, update stages, log interactions, search contacts, and summarize the pipeline.
 
 Be concise and direct — this is Discord, not email. Use bullet points and short sentences. Format numbers cleanly ($4.2M not $4,200,000). When updating or logging something, confirm what you did.
+
+When creating a deal and the banker is not in the DB (contact_not_found: true), always follow up by asking the user for the banker's details (first name, last name, firm, email, phone) so you can create and link them. Ask for all fields in one message.
 
 Today's date: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
       tools,
