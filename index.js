@@ -2,7 +2,6 @@ const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require
 const { createClient } = require('@supabase/supabase-js')
 const Anthropic = require('@anthropic-ai/sdk')
 const { handleAgentMessage } = require('./agent')
-const { sendWeeklyEmail } = require('./weekly-email')
 const fetch = require('node-fetch')
 const { FormData } = require('formdata-node')
 const fs = require('fs')
@@ -746,23 +745,3 @@ client.on('messageCreate', async message => {
 
 client.login(process.env.DISCORD_BOT_TOKEN)
 
-// Weekly email scheduler — every Monday at 7am CT (13:00 UTC)
-function scheduleWeeklyEmail() {
-  const now = new Date()
-  const next = new Date()
-  // Find next Monday
-  const daysUntilMonday = (8 - now.getUTCDay()) % 7 || 7
-  next.setUTCDate(now.getUTCDate() + daysUntilMonday)
-  next.setUTCHours(13, 0, 0, 0) // 7am CT = 13:00 UTC
-  // If it's Monday and before 1pm UTC, send today
-  if (now.getUTCDay() === 1 && now.getUTCHours() < 13) {
-    next.setUTCDate(now.getUTCDate())
-  }
-  const msUntilNext = next.getTime() - now.getTime()
-  console.log('Next weekly email in', Math.round(msUntilNext / 1000 / 60 / 60), 'hours')
-  setTimeout(() => {
-    sendWeeklyEmail()
-    setInterval(sendWeeklyEmail, 7 * 24 * 60 * 60 * 1000) // then every 7 days
-  }, msUntilNext)
-}
-scheduleWeeklyEmail()
