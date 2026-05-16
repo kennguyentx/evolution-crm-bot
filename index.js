@@ -524,11 +524,18 @@ client.on('messageCreate', async message => {
       }
 
       if (cmd === 'save' || cmd === 'skip') {
-        // Start banker search flow before saving
         if (!pending.bankerStep && cmd !== 'skip') {
-          pending.bankerStep = 'search'
-          const bankerHint = pending.parsed.banker_name ? ' (AI extracted: ' + pending.parsed.banker_name + (pending.parsed.banker_firm ? ' @ ' + pending.parsed.banker_firm : '') + ')' : ''
-          await message.reply('🏦 **Who is the source banker/contact?**' + bankerHint + '\nType a name or firm to search your contacts DB, or type `skip` to save without linking a contact.')
+          // If AI found a banker name, go to search first
+          if (pending.parsed.banker_name) {
+            pending.bankerStep = 'search'
+            const hint = pending.parsed.banker_name + (pending.parsed.banker_firm ? ' @ ' + pending.parsed.banker_firm : '')
+            await message.reply('🏦 **Source banker:** AI extracted "' + hint + '"\nType a name or firm to search your contacts DB, or type `confirm` to use this as-is, or `skip` to save without a contact.')
+          } else {
+            // No banker found — show quick entry form
+            pending.bankerStep = 'new'
+            pending.newContact = { first_name: '', last_name: '', firm: '', email: '', phone: '' }
+            await message.reply('🏦 **No banker found in document. Add one?**\nReply with details (one per line):\n1. First name\n2. Last name\n3. Firm\n4. Email (optional)\n5. Phone (optional)\n\nOr type `skip` to save without a contact.\nOr type a name/firm to search existing contacts.')
+          }
           return
         }
         pendingDeals.delete(pendingId)
@@ -539,6 +546,13 @@ client.on('messageCreate', async message => {
       // Banker search flow
       if (pending.bankerStep === 'search') {
         if (cmd === 'skip') {
+          pending.bankerStep = null
+          pendingDeals.delete(pendingId)
+          try { await saveDeal(pending.parsed, pending.replyMsg) } catch (e) { await pending.replyMsg.edit('❌ Save failed: ' + e.message) }
+          return
+        }
+        // confirm = save with AI-extracted banker name (no DB link)
+        if (cmd === 'confirm') {
           pending.bankerStep = null
           pendingDeals.delete(pendingId)
           try { await saveDeal(pending.parsed, pending.replyMsg) } catch (e) { await pending.replyMsg.edit('❌ Save failed: ' + e.message) }
@@ -595,7 +609,7 @@ client.on('messageCreate', async message => {
         if (cmd === 'new') {
           pending.bankerStep = 'new'
           pending.newContact = { first_name: '', last_name: '', firm: pending.parsed.banker_firm || '', email: '', phone: '' }
-          await message.reply('Add new contact:\n1. First name\n2. Last name\n3. Firm: ' + (pending.newContact.firm || '?') + '\n4. Email (optional)\n\nReply with values line by line, or `confirm` to save as-is.')
+          await message.reply('Add new contact:\n1. First name\n2. Last name\n3. Firm: ' + (pending.newContact.firm || '?') + '\n4. Email (optional)\n5. Phone (optional)\n\nReply with values line by line, or `confirm` to save as-is.')
           return
         }
         const num = parseInt(cmd)
@@ -645,12 +659,14 @@ client.on('messageCreate', async message => {
         if (lines[1]) pending.newContact.last_name = lines[1]
         if (lines[2]) pending.newContact.firm = lines[2]
         if (lines[3]) pending.newContact.email = lines[3]
+        if (lines[4]) pending.newContact.phone = lines[4]
         const nc = pending.newContact
         let msg = '📝 **New contact preview:**\n'
         msg += 'First: ' + (nc.first_name || '❌ missing') + '\n'
         msg += 'Last: ' + (nc.last_name || '❌ missing') + '\n'
         msg += 'Firm: ' + (nc.firm || '—') + '\n'
-        msg += 'Email: ' + (nc.email || '—') + '\n\n'
+        msg += 'Email: ' + (nc.email || '—') + '\n'
+        msg += 'Phone: ' + (nc.phone || '—') + '\n\n'
         msg += 'Reply `confirm` to create and link, or correct fields above.'
         await message.reply(msg)
         return
