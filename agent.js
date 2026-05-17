@@ -13,6 +13,20 @@ function fmt(n) {
   return '$' + n
 }
 
+// ── Rate limiting: one request per user at a time, 5s cooldown ──────────────
+const userCooldowns = new Map()
+const COOLDOWN_MS = 5000
+
+function isRateLimited(userId) {
+  const last = userCooldowns.get(userId)
+  if (!last) return false
+  return Date.now() - last < COOLDOWN_MS
+}
+
+function setRateLimit(userId) {
+  userCooldowns.set(userId, Date.now())
+}
+
 // Tools the agent can use
 const tools = [
   {
@@ -117,18 +131,18 @@ const tools = [
     input_schema: {
       type: 'object',
       properties: {
-        query:        { type: 'string', description: 'Name or firm to find the contact' },
+        query: { type: 'string', description: 'Name or firm to find the contact' },
         updates: {
           type: 'object',
           properties: {
-            first_name:   { type: 'string' },
-            last_name:    { type: 'string' },
-            firm:         { type: 'string' },
-            title:        { type: 'string' },
-            email:        { type: 'string' },
-            phone:        { type: 'string' },
+            first_name: { type: 'string' },
+            last_name: { type: 'string' },
+            firm: { type: 'string' },
+            title: { type: 'string' },
+            email: { type: 'string' },
+            phone: { type: 'string' },
             contact_type: { type: 'string' },
-            notes:        { type: 'string' },
+            notes: { type: 'string' },
           },
         },
       },
@@ -137,38 +151,38 @@ const tools = [
   },
   {
     name: 'create_contact',
-    description: 'Create a new contact in the CRM. Use when a banker or other contact is not found in the database and the user provides their details.',
+    description: 'Create a new contact in the CRM.',
     input_schema: {
       type: 'object',
       properties: {
-        first_name:   { type: 'string' },
-        last_name:    { type: 'string' },
-        firm:         { type: 'string' },
-        title:        { type: 'string' },
-        email:        { type: 'string' },
-        phone:        { type: 'string' },
+        first_name: { type: 'string' },
+        last_name: { type: 'string' },
+        firm: { type: 'string' },
+        title: { type: 'string' },
+        email: { type: 'string' },
+        phone: { type: 'string' },
         contact_type: { type: 'string', description: 'banker, lp, lender, advisor, management, other' },
-        deal_id:      { type: 'string', description: 'If provided, link this contact to a deal as Source / Banker' },
+        deal_id: { type: 'string', description: 'If provided, link this contact to a deal as Source / Banker' },
       },
       required: ['first_name', 'last_name'],
     },
   },
   {
     name: 'create_deal',
-    description: 'Create a new deal in the CRM. Use when someone describes a new company or opportunity to add to the pipeline.',
+    description: 'Create a new deal in the CRM.',
     input_schema: {
       type: 'object',
       properties: {
-        company_name:  { type: 'string', description: 'Company name' },
-        sector:        { type: 'string', description: 'Sector' },
-        geography:     { type: 'string', description: 'State or region' },
-        deal_type:     { type: 'string', description: 'platform, add-on, recap, or growth' },
-        revenue:       { type: 'number', description: 'Annual revenue in dollars' },
-        ebitda:        { type: 'number', description: 'Annual EBITDA in dollars' },
-        stage:         { type: 'string', description: 'Stage — defaults to Teaser' },
-        description:   { type: 'string', description: 'Brief description of the business' },
-        banker_name:   { type: 'string', description: 'Full name of the source banker or contact' },
-        banker_firm:   { type: 'string', description: 'Firm name of the source banker' },
+        company_name: { type: 'string' },
+        sector: { type: 'string' },
+        geography: { type: 'string' },
+        deal_type: { type: 'string', description: 'platform, add-on, recap, or growth' },
+        revenue: { type: 'number' },
+        ebitda: { type: 'number' },
+        stage: { type: 'string', description: 'Defaults to Teaser' },
+        description: { type: 'string' },
+        banker_name: { type: 'string' },
+        banker_firm: { type: 'string' },
       },
       required: ['company_name'],
     },
@@ -211,8 +225,8 @@ async function executeTool(name, input) {
       const deal = deals[0]
       const [{ data: contacts }, { data: interactions }, { data: diligence }] = await Promise.all([
         supabase.from('contact_deal_links').select('role, contact:contacts(first_name, last_name, firm, email, phone, contact_type)').eq('deal_id', deal.id),
-        supabase.from('interactions').select('*').eq('deal_id', deal.id).order('interaction_date', { ascending: false }).limit(5),
-        supabase.from('diligence_items').select('*').eq('deal_id', deal.id),
+        supabase.from('interactions').select('interaction_type, summary, next_steps, interaction_date').eq('deal_id', deal.id).order('interaction_date', { ascending: false }).limit(3),
+        supabase.from('diligence_items').select('status').eq('deal_id', deal.id),
       ])
       return { deal, contacts, recent_interactions: interactions, diligence_summary: { total: diligence?.length || 0, complete: diligence?.filter(d => d.status === 'Complete').length || 0 } }
     }
@@ -277,8 +291,7 @@ async function executeTool(name, input) {
 
     case 'update_contact': {
       const q = input.query
-      const parts = q.split(' ').filter(Boolean)
-      let { data: contacts } = await supabase.from('contacts')
+      const { data: contacts } = await supabase.from('contacts')
         .select('id, first_name, last_name, firm')
         .or('first_name.ilike.%' + q + '%,last_name.ilike.%' + q + '%,firm.ilike.%' + q + '%')
         .limit(3)
@@ -291,14 +304,14 @@ async function executeTool(name, input) {
 
     case 'create_contact': {
       const { data: contact, error } = await supabase.from('contacts').insert({
-        first_name:   input.first_name,
-        last_name:    input.last_name,
-        firm:         input.firm || null,
-        title:        input.title || null,
-        email:        input.email || null,
-        phone:        input.phone || null,
+        first_name: input.first_name,
+        last_name: input.last_name,
+        firm: input.firm || null,
+        title: input.title || null,
+        email: input.email || null,
+        phone: input.phone || null,
         contact_type: input.contact_type || 'banker',
-        sub_type:     input.contact_type === 'banker' ? 'M&A banker / intermediary' : null,
+        sub_type: input.contact_type === 'banker' ? 'M&A banker / intermediary' : null,
       }).select().single()
       if (error) return { error: error.message }
       if (input.deal_id && contact) {
@@ -308,28 +321,26 @@ async function executeTool(name, input) {
     }
 
     case 'create_deal': {
-      // Insert deal
       const { data: deal, error } = await supabase.from('deals').insert({
-        company_name:   input.company_name,
-        sector:         input.sector || null,
-        geography:      input.geography || null,
-        deal_type:      input.deal_type || 'platform',
-        revenue:        input.revenue || null,
-        ebitda:         input.ebitda || null,
-        stage:          input.stage || 'Teaser',
-        status:         'Active',
-        description:    input.description || null,
-        source_notes:   input.banker_firm || null,
+        company_name: input.company_name,
+        sector: input.sector || null,
+        geography: input.geography || null,
+        deal_type: input.deal_type || 'platform',
+        revenue: input.revenue || null,
+        ebitda: input.ebitda || null,
+        stage: input.stage || 'Teaser',
+        status: 'Active',
+        description: input.description || null,
+        source_notes: input.banker_firm || null,
         expected_close: new Date().toISOString().split('T')[0],
       }).select().single()
       if (error) return { error: error.message }
 
-      // Try to link banker by name + firm
       let contactLinked = null
       if (input.banker_name) {
         const parts = input.banker_name.split(' ').filter(Boolean)
         const first = parts[0] || ''
-        const last = parts[parts.length-1] || ''
+        const last = parts[parts.length - 1] || ''
         let { data: contacts } = await supabase.from('contacts')
           .select('id, first_name, last_name, firm')
           .ilike('first_name', '%' + first + '%')
@@ -347,8 +358,7 @@ async function executeTool(name, input) {
           contactLinked = contacts[0].first_name + ' ' + contacts[0].last_name
         }
       }
-      const contactNotFound = input.banker_name && !contactLinked
-      return { success: true, deal_id: deal.id, company_name: deal.company_name, stage: deal.stage, contact_linked: contactLinked, contact_not_found: contactNotFound, banker_name: input.banker_name, banker_firm: input.banker_firm }
+      return { success: true, deal_id: deal.id, company_name: deal.company_name, stage: deal.stage, contact_linked: contactLinked, contact_not_found: input.banker_name && !contactLinked, banker_name: input.banker_name, banker_firm: input.banker_firm }
     }
 
     case 'get_deal_contacts': {
@@ -363,43 +373,73 @@ async function executeTool(name, input) {
   }
 }
 
-// Conversation memory per channel
+// Trim tool results in history to avoid bloating token count
+function trimHistory(history) {
+  return history.map(msg => {
+    if (!Array.isArray(msg.content)) return msg
+    return {
+      ...msg,
+      content: msg.content.map(block => {
+        if (block.type === 'tool_result') {
+          try {
+            const parsed = JSON.parse(block.content)
+            // Truncate large arrays to 5 items
+            if (parsed.deals && parsed.deals.length > 5) parsed.deals = parsed.deals.slice(0, 5)
+            if (parsed.contacts && parsed.contacts.length > 5) parsed.contacts = parsed.contacts.slice(0, 5)
+            return { ...block, content: JSON.stringify(parsed) }
+          } catch { return block }
+        }
+        return block
+      })
+    }
+  })
+}
+
+// Conversation memory per channel (last 10 messages only)
 const conversations = new Map()
 
 async function handleAgentMessage(message) {
+  // Rate limit check
+  if (isRateLimited(message.author.id)) {
+    await message.reply('⏳ One moment — please wait a few seconds before sending another message.')
+    return
+  }
+  setRateLimit(message.author.id)
+
   const channelId = message.channel.id
   if (!conversations.has(channelId)) conversations.set(channelId, [])
   const history = conversations.get(channelId)
 
-  // Add user message
   history.push({ role: 'user', content: message.content })
 
-  // Keep last 20 messages
-  if (history.length > 20) history.splice(0, history.length - 20)
+  // Keep last 10 messages (down from 20) to reduce token usage
+  if (history.length > 10) history.splice(0, history.length - 10)
 
   await message.channel.sendTyping()
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: `You are the Evolution CRM assistant for Evolution Strategy Partners, an independent sponsor private equity firm focused on infrastructure and industrial services (underground utilities, electrical contracting, civil/public works, commercial landscaping, fiber optics).
+      model: 'claude-haiku-4-5',
+      max_tokens: 800,
+      system: `You are the Evolution CRM assistant for Evolution Strategy Partners, an independent sponsor PE firm focused on infrastructure and industrial services. You have direct access to the deal CRM.
 
-You have direct access to the firm's deal CRM. You can search deals, view deal details, update stages, log interactions, search contacts, and summarize the pipeline.
+Be concise — this is Discord. Use bullet points and short sentences. Format numbers cleanly ($4.2M). Confirm actions when done.
 
-Be concise and direct — this is Discord, not email. Use bullet points and short sentences. Format numbers cleanly ($4.2M not $4,200,000). When updating or logging something, confirm what you did.
+When creating a deal and banker not found (contact_not_found: true), ask for banker details in one message.
 
-When creating a deal and the banker is not in the DB (contact_not_found: true), always follow up by asking the user for the banker's details (first name, last name, firm, email, phone) so you can create and link them. Ask for all fields in one message.
-
-Today's date: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
+Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
       tools,
-      messages: history,
+      messages: trimHistory(history),
     })
 
     // Process tool calls
-    let finalText = ''
-    while (response.stop_reason === 'tool_use') {
-      const toolUses = response.content.filter(b => b.type === 'tool_use')
+    let currentResponse = response
+    let iterations = 0
+    const MAX_ITERATIONS = 3 // prevent runaway loops
+
+    while (currentResponse.stop_reason === 'tool_use' && iterations < MAX_ITERATIONS) {
+      iterations++
+      const toolUses = currentResponse.content.filter(b => b.type === 'tool_use')
       const toolResults = []
 
       for (const toolUse of toolUses) {
@@ -407,41 +447,26 @@ Today's date: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'nu
         toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(result) })
       }
 
-      // Add assistant response and tool results to history
-      history.push({ role: 'assistant', content: response.content })
+      history.push({ role: 'assistant', content: currentResponse.content })
       history.push({ role: 'user', content: toolResults })
 
-      // Get next response
-      const nextResponse = await anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 1024,
-        system: `You are the Evolution CRM assistant for Evolution Strategy Partners. Be concise and direct — this is Discord. Format numbers cleanly. Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
+      currentResponse = await anthropic.messages.create({
+        model: 'claude-haiku-4-5',
+        max_tokens: 800,
+        system: `You are the Evolution CRM assistant. Be concise — this is Discord. Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
         tools,
-        messages: history,
+        messages: trimHistory(history),
       })
-
-      if (nextResponse.stop_reason !== 'tool_use') {
-        finalText = nextResponse.content.filter(b => b.type === 'text').map(b => b.text).join('')
-        history.push({ role: 'assistant', content: nextResponse.content })
-        break
-      }
-      // Loop if more tool calls
-      Object.assign(response, nextResponse)
     }
 
-    if (!finalText) {
-      finalText = response.content.filter(b => b.type === 'text').map(b => b.text).join('')
-      history.push({ role: 'assistant', content: response.content })
-    }
+    const finalText = currentResponse.content.filter(b => b.type === 'text').map(b => b.text).join('')
+    history.push({ role: 'assistant', content: currentResponse.content })
 
-    // Send response (split if over 2000 chars)
     if (finalText.length <= 2000) {
       await message.reply(finalText)
     } else {
       const chunks = finalText.match(/[\s\S]{1,1900}/g) || []
-      for (const chunk of chunks) {
-        await message.channel.send(chunk)
-      }
+      for (const chunk of chunks) await message.channel.send(chunk)
     }
 
   } catch (err) {
