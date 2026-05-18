@@ -421,8 +421,11 @@ async function executeTool(name, input) {
     }
 
     case 'list_files': {
-      // Dropbox API uses empty string for root, not "/" or "."
-      const dbxPath = input.path === '/' || input.path === '.' ? '' : input.path
+      // Normalize path — Dropbox uses empty string for root
+      let dbxPath = input.path || ''
+      if (dbxPath === '/' || dbxPath === '.' || dbxPath === '') {
+        dbxPath = '/Evolution Strategy Partners'
+      }
       const res = await dbx.filesListFolder({ path: dbxPath, recursive: false })
       const items = res.result.entries.map(e => ({
         name: e.name,
@@ -434,7 +437,7 @@ async function executeTool(name, input) {
         if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
         return a.name.localeCompare(b.name)
       })
-      return { folder: input.path, items }
+      return { folder: dbxPath, items }
     }
 
     case 'read_file': {
