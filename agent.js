@@ -464,35 +464,57 @@ async function executeTool(name, input) {
 
       const res = await dbx.filesDownload({ path: input.path })
       const buffer = res.result.fileBinary
-      const base64 = buffer.toString('base64')
       const fileName = input.path.split('/').pop()
 
+      // Text files — return content directly
       if (['.txt', '.md', '.csv'].includes(fileExt)) {
         return { file: fileName, content: buffer.toString('utf-8').slice(0, 20000) }
       }
 
-      let fileContent
+      // PDFs — Claude can read natively as base64 document
       if (fileExt === '.pdf') {
-        fileContent = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
-      } else if (['.xlsx', '.xls'].includes(fileExt)) {
-        fileContent = { type: 'document', source: { type: 'base64', media_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', data: base64 } }
-      } else if (fileExt === '.docx') {
-        fileContent = { type: 'document', source: { type: 'base64', media_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', data: base64 } }
+        const base64 = buffer.toString('base64')
+        const extractResp = await anthropic.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4000,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+              { type: 'text', text: `Extract and summarize the full content of this file "${fileName}". Include all key facts, figures, dates, parties, and terms. Be comprehensive.` },
+            ],
+          }],
+        })
+        const content = extractResp.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
+        return { file: fileName, content }
       }
 
-      const extractResp = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 4000,
-        messages: [{
-          role: 'user',
-          content: [
-            fileContent,
-            { type: 'text', text: `Extract and summarize the full content of this file "${fileName}". Include all key facts, figures, dates, parties, and terms. Be comprehensive.` },
-          ],
-        }],
-      })
-      const content = extractResp.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
-      return { file: fileName, content }
+      // Word/Excel — Claude doesn't support these as documents, extract text via mammoth/xlsx
+      if (['.docx', '.doc'].includes(fileExt)) {
+        try {
+          const mammoth = require('mammoth')
+          const result = await mammoth.extractRawText({ buffer })
+          return { file: fileName, content: result.value.slice(0, 20000) }
+        } catch {
+          return { error: `Could not extract text from ${fileName}. Try converting to PDF first.` }
+        }
+      }
+
+      if (['.xlsx', '.xls'].includes(fileExt)) {
+        try {
+          const XLSX = require('xlsx')
+          const wb = XLSX.read(buffer, { type: 'buffer' })
+          const text = wb.SheetNames.map(name => {
+            const ws = wb.Sheets[name]
+            return `Sheet: ${name}\n${XLSX.utils.sheet_to_csv(ws)}`
+          }).join('\n\n')
+          return { file: fileName, content: text.slice(0, 20000) }
+        } catch {
+          return { error: `Could not extract data from ${fileName}.` }
+        }
+      }
+
+      return { error: `Unsupported file type: ${fileExt}` }
     }
 
     default:
