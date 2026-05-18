@@ -421,20 +421,29 @@ async function executeTool(name, input) {
     }
 
     case 'list_files': {
-      // Always use the correct known path — never trust model-provided paths blindly
-      const ROOT = '/Ken Nguyen/Evolution Strategy Partners'
+      // Use namespace ID for shared folder — path-based access doesn't work for shared folders
+      const ROOT = 'ns:j73zywijxjr5skl5wn6k8'
       let dbxPath = input.path || ''
 
-      // Normalize bad paths
-      if (!dbxPath || dbxPath === '/' || dbxPath === '.' || dbxPath === '..' || dbxPath.includes('..') || !dbxPath.startsWith('/Ken')) {
-        dbxPath = ROOT
+      // If path looks like a subpath, append to namespace
+      let finalPath
+      if (!dbxPath || dbxPath === '/' || dbxPath === '.' || dbxPath === '..' || dbxPath.includes('..') || !dbxPath.startsWith('/')) {
+        finalPath = ROOT
+      } else if (dbxPath.startsWith('/Ken Nguyen/Evolution Strategy Partners')) {
+        // Strip the root prefix and use namespace + subfolder
+        const sub = dbxPath.replace('/Ken Nguyen/Evolution Strategy Partners', '').trim()
+        finalPath = sub ? `${ROOT}${sub}` : ROOT
+      } else if (dbxPath.startsWith('ns:')) {
+        finalPath = dbxPath
+      } else {
+        finalPath = `${ROOT}${dbxPath.startsWith('/') ? dbxPath : '/' + dbxPath}`
       }
 
       try {
-        const res = await dbx.filesListFolder({ path: dbxPath, recursive: false })
+        const res = await dbx.filesListFolder({ path: finalPath, recursive: false })
         const items = res.result.entries.map(e => ({
           name: e.name,
-          path: e.path_display, // use path_display to preserve casing
+          path: e.path_display || e.path_lower,
           type: e['.tag'],
           size: e.size,
         }))
@@ -442,20 +451,17 @@ async function executeTool(name, input) {
           if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
           return a.name.localeCompare(b.name)
         })
-        return { folder: dbxPath, items }
+        return { folder: finalPath, items }
       } catch (err) {
-        // If path fails, fall back to root
-        if (dbxPath !== ROOT) {
-          const res = await dbx.filesListFolder({ path: ROOT, recursive: false })
-          const items = res.result.entries.map(e => ({
-            name: e.name,
-            path: e.path_display,
-            type: e['.tag'],
-            size: e.size,
-          }))
-          return { folder: ROOT, note: `Path "${dbxPath}" not found, showing root instead`, items }
-        }
-        throw err
+        // Fall back to root namespace on any path error
+        const res = await dbx.filesListFolder({ path: ROOT, recursive: false })
+        const items = res.result.entries.map(e => ({
+          name: e.name,
+          path: e.path_display || e.path_lower,
+          type: e['.tag'],
+          size: e.size,
+        }))
+        return { folder: ROOT, note: `Showing root folder`, items }
       }
     }
 
@@ -558,7 +564,7 @@ When creating a deal and banker not found (contact_not_found: true), ask for ban
 
 Capital raises are tracked separately. To log a capital raise update, just describe it naturally in any channel — e.g. "Sinclair sent a term sheet on Coggins" or "BMO passed, geographic concentration". The bot will parse and confirm before saving. You can tell users this when they ask about capital raises.
 
-DROPBOX: The Evolution Strategy Dropbox root path is "/Ken Nguyen/Evolution Strategy Partners". Subfolders: Auditors, Bankers, Best Practices, Claude, Compliance, Consultants, Dealflow, Deals, Evolution Investments, Industry Data, Investors, Lenders, Marketing, Office, Portfolio Co's. Deal files are under "/Ken Nguyen/Evolution Strategy Partners/Deals/[Company Name]". Portfolio company files are under "/Ken Nguyen/Evolution Strategy Partners/Portfolio Co's/[Company Name]". Always start from these known paths — never guess.
+DROPBOX: The Evolution Strategy Dropbox is a shared folder. When calling list_files, use these exact paths: Root: "/Ken Nguyen/Evolution Strategy Partners", Deals: "/Ken Nguyen/Evolution Strategy Partners/Deals/[Company Name]", Portfolio: "/Ken Nguyen/Evolution Strategy Partners/Portfolio Co's/[Company Name]". Subfolders at root: Auditors, Bankers, Best Practices, Claude, Compliance, Consultants, Dealflow, Deals, Evolution Investments, Industry Data, Investors, Lenders, Marketing, Office, Portfolio Co's. Never guess paths.
 
 Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
       tools,
