@@ -550,13 +550,15 @@ function trimHistory(history) {
 
   // Find a safe cut point — must cut before a user message that isn't a tool_result
   let cutAt = trimmed.length - 10
-  while (cutAt < trimmed.length) {
+  while (cutAt < trimmed.length - 1) {
     const msg = trimmed[cutAt]
     const isToolResult = Array.isArray(msg.content) && msg.content.every(b => b.type === 'tool_result')
     if (msg.role === 'user' && !isToolResult) break
     cutAt++
   }
-  return trimmed.slice(cutAt)
+  const result = trimmed.slice(cutAt)
+  // Always return at least one message
+  return result.length > 0 ? result : trimmed.slice(-1)
 }
 
 // Conversation memory per channel (last 10 messages only)
@@ -575,9 +577,6 @@ async function handleAgentMessage(message) {
   const history = conversations.get(channelId)
 
   history.push({ role: 'user', content: message.content })
-
-  // Keep last 10 messages (down from 20) to reduce token usage
-  if (history.length > 10) history.splice(0, history.length - 10)
 
   await message.channel.sendTyping()
 
