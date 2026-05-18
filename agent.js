@@ -588,7 +588,7 @@ Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric',
     // Process tool calls
     let currentResponse = response
     let iterations = 0
-    const MAX_ITERATIONS = 3 // prevent runaway loops
+    const MAX_ITERATIONS = 5 // allow enough iterations for file browsing
 
     while (currentResponse.stop_reason === 'tool_use' && iterations < MAX_ITERATIONS) {
       iterations++
