@@ -615,10 +615,12 @@ Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric',
     const finalText = currentResponse.content.filter(b => b.type === 'text').map(b => b.text).join('')
     history.push({ role: 'assistant', content: currentResponse.content })
 
-    if (finalText.length <= 2000) {
-      await message.reply(finalText)
+    const replyText = finalText.trim() || '✅ Done.'
+
+    if (replyText.length <= 2000) {
+      await message.reply(replyText)
     } else {
-      const chunks = finalText.match(/[\s\S]{1,1900}/g) || []
+      const chunks = replyText.match(/[\s\S]{1,1900}/g) || []
       for (const chunk of chunks) await message.channel.send(chunk)
     }
 
