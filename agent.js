@@ -596,7 +596,12 @@ Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric',
       const toolResults = []
 
       for (const toolUse of toolUses) {
-        const result = await executeTool(toolUse.name, toolUse.input)
+        let result
+        try {
+          result = await executeTool(toolUse.name, toolUse.input)
+        } catch (err) {
+          result = { error: err.message }
+        }
         toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(result) })
       }
 
