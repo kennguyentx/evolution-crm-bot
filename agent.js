@@ -421,26 +421,18 @@ async function executeTool(name, input) {
     }
 
     case 'list_files': {
-      // Use namespace ID for shared folder — path-based access doesn't work for shared folders
-      const ROOT = 'ns:j73zywijxjr5skl5wn6k8'
       let dbxPath = input.path || ''
 
-      // If path looks like a subpath, append to namespace
-      let finalPath
-      if (!dbxPath || dbxPath === '/' || dbxPath === '.' || dbxPath === '..' || dbxPath.includes('..') || !dbxPath.startsWith('/')) {
-        finalPath = ROOT
-      } else if (dbxPath.startsWith('/Ken Nguyen/Evolution Strategy Partners')) {
-        // Strip the root prefix and use namespace + subfolder
-        const sub = dbxPath.replace('/Ken Nguyen/Evolution Strategy Partners', '').trim()
-        finalPath = sub ? `${ROOT}${sub}` : ROOT
-      } else if (dbxPath.startsWith('ns:')) {
-        finalPath = dbxPath
-      } else {
-        finalPath = `${ROOT}${dbxPath.startsWith('/') ? dbxPath : '/' + dbxPath}`
+      // Normalize bad paths to empty string (Dropbox account root)
+      if (!dbxPath || dbxPath === '/' || dbxPath === '.' || dbxPath === '..' || dbxPath.includes('..') || dbxPath.startsWith('ns:')) {
+        dbxPath = ''
       }
 
+      // Strip known bad prefix patterns the model might generate
+      dbxPath = dbxPath.replace(/^\/Ken Nguyen\/Evolution Strategy Partners/, '/Evolution Strategy Partners')
+
       try {
-        const res = await dbx.filesListFolder({ path: finalPath, recursive: false })
+        const res = await dbx.filesListFolder({ path: dbxPath, recursive: false })
         const items = res.result.entries.map(e => ({
           name: e.name,
           path: e.path_display || e.path_lower,
@@ -451,17 +443,17 @@ async function executeTool(name, input) {
           if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
           return a.name.localeCompare(b.name)
         })
-        return { folder: finalPath, items }
+        return { folder: dbxPath || 'root', items }
       } catch (err) {
-        // Fall back to root namespace on any path error
-        const res = await dbx.filesListFolder({ path: ROOT, recursive: false })
+        // Fall back to account root on any path error so user always gets something
+        const res = await dbx.filesListFolder({ path: '', recursive: false })
         const items = res.result.entries.map(e => ({
           name: e.name,
           path: e.path_display || e.path_lower,
           type: e['.tag'],
           size: e.size,
         }))
-        return { folder: ROOT, note: `Showing root folder`, items }
+        return { folder: 'root', note: `Could not find "${dbxPath}", showing account root instead`, items }
       }
     }
 
@@ -564,7 +556,7 @@ When creating a deal and banker not found (contact_not_found: true), ask for ban
 
 Capital raises are tracked separately. To log a capital raise update, just describe it naturally in any channel — e.g. "Sinclair sent a term sheet on Coggins" or "BMO passed, geographic concentration". The bot will parse and confirm before saving. You can tell users this when they ask about capital raises.
 
-DROPBOX: The Evolution Strategy Dropbox is a shared folder. When calling list_files, use these exact paths: Root: "/Ken Nguyen/Evolution Strategy Partners", Deals: "/Ken Nguyen/Evolution Strategy Partners/Deals/[Company Name]", Portfolio: "/Ken Nguyen/Evolution Strategy Partners/Portfolio Co's/[Company Name]". Subfolders at root: Auditors, Bankers, Best Practices, Claude, Compliance, Consultants, Dealflow, Deals, Evolution Investments, Industry Data, Investors, Lenders, Marketing, Office, Portfolio Co's. Never guess paths.
+DROPBOX: When calling list_files, start with path "" (empty string) to list the account root, then drill into subfolders using the exact paths returned. The Evolution Strategy Partners folder is at the root level. Deal files are typically under "/Evolution Strategy Partners/Deals/[Company Name]". Portfolio files are under "/Evolution Strategy Partners/Portfolio Co's/[Company Name]". Always use exact paths returned by list_files — never guess.
 
 Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
       tools,
