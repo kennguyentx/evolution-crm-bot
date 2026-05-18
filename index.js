@@ -1,7 +1,7 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js')
 const { createClient } = require('@supabase/supabase-js')
 const Anthropic = require('@anthropic-ai/sdk')
-const { handleAgentMessage } = require('./agent')
+const { handleAgentMessage, clearHistory } = require('./agent')
 const fetch = require('node-fetch')
 const { handleCapitalMessage } = require('./capitalRaiseHandler')
 const { handleMeetingNotes } = require('./meetingNotesHandler')
@@ -90,6 +90,10 @@ const commands = [
     .setDescription('Log an interaction')
     .addStringOption(opt => opt.setName('company').setDescription('Company name').setRequired(true))
     .addStringOption(opt => opt.setName('note').setDescription('Interaction note').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('clear')
+    .setDescription('Clear the conversation history for this channel'),
 ]
 
 // ─────────────────────────────────────────────────
@@ -509,6 +513,9 @@ client.on('interactionCreate', async interaction => {
       await handleDigest(interaction)
     } else if (interaction.commandName === 'log') {
       await handleLog(interaction)
+    } else if (interaction.commandName === 'clear') {
+      clearHistory(interaction.channelId)
+      await interaction.reply({ content: '🧹 Conversation history cleared for this channel.', ephemeral: true })
     }
   } catch (err) {
     console.error(err)
@@ -762,4 +769,3 @@ client.on('messageCreate', async message => {
 })
 
 client.login(process.env.DISCORD_BOT_TOKEN)
-
