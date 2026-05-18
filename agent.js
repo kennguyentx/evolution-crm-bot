@@ -232,9 +232,10 @@ async function executeTool(name, input) {
     }
 
     case 'update_deal': {
-      const { data: deals } = await supabase.from('deals').select('id, company_name, status').ilike('company_name', `%${input.company_name}%`).limit(1)
+      const { data: deals } = await supabase.from('deals').select('id, company_name, status, stage').ilike('company_name', `%${input.company_name}%`).limit(1)
       if (!deals?.length) return { error: 'Deal not found' }
       const updates = { ...input.updates }
+
       if (updates.stage) {
         if (updates.stage === 'Closed (Platform)' || updates.stage === 'Closed (Add-On)') {
           updates.status = 'Closed'
@@ -244,6 +245,18 @@ async function executeTool(name, input) {
           updates.status = 'Active'
         }
       }
+
+      if (updates.status && !updates.stage) {
+        if (updates.status === 'Closed') {
+          updates.stage = 'Closed (Platform)'
+        } else if (updates.status === 'Dead') {
+          updates.stage = deals[0].stage.startsWith('Pass') ? deals[0].stage : 'Pass (Pre-LOI)'
+        } else if (updates.status === 'Active') {
+          const s = deals[0].stage || ''
+          updates.stage = (s.startsWith('Pass') || s.startsWith('Closed')) ? 'Reviewing' : s
+        }
+      }
+
       const { error } = await supabase.from('deals').update(updates).eq('id', deals[0].id)
       if (error) return { error: error.message }
       return { success: true, company_name: deals[0].company_name, updated: updates }
