@@ -421,7 +421,9 @@ async function executeTool(name, input) {
     }
 
     case 'list_files': {
-      const res = await dbx.filesListFolder({ path: input.path, recursive: false })
+      // Dropbox API uses empty string for root, not "/" or "."
+      const dbxPath = input.path === '/' || input.path === '.' ? '' : input.path
+      const res = await dbx.filesListFolder({ path: dbxPath, recursive: false })
       const items = res.result.entries.map(e => ({
         name: e.name,
         path: e.path_lower,
