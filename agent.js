@@ -650,4 +650,8 @@ Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric',
   }
 }
 
-module.exports = { handleAgentMessage }
+function clearHistory(channelId) {
+  conversations.delete(channelId)
+}
+
+module.exports = { handleAgentMessage, clearHistory }
