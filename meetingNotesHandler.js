@@ -29,17 +29,24 @@ async function handleMeetingNotes(message) {
   const raw = message.content.trim()
   if (!raw || raw.length < 10) return false
 
+  console.log(`[meetingNotes] processing message from ${message.author.username}`)
+
   // Who logged it
   const loggedBy = message.member?.displayName || message.author.username
 
   await message.react('⏳')
 
   try {
+    console.log(`[meetingNotes] parsing notes...`)
     const parsed = await parseNotes(raw, loggedBy)
+    console.log(`[meetingNotes] parsed, persisting...`)
     const result = await persistNote(raw, parsed, loggedBy)
+    console.log(`[meetingNotes] persisted, posting confirmation...`)
     await message.reactions.removeAll().catch(() => {})
     await postConfirmation(message, parsed, result)
+    console.log(`[meetingNotes] done`)
   } catch (err) {
+    console.error(`[meetingNotes] error:`, err)
     await message.reactions.removeAll().catch(() => {})
     await message.reply(`❌ Failed to log note: ${err.message}`)
   }
