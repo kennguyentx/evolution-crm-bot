@@ -59,7 +59,7 @@ async function handleMeetingNotes(message) {
 
 async function parseNotes(raw, loggedBy) {
   const resp = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-6',
     max_tokens: 1000,
     messages: [{
       role: 'user',
@@ -85,7 +85,7 @@ Return this exact JSON shape:
     }]
   })
 
-  const text = resp.content[0].text.trim()
+  const text = resp.content[0].text.replace(/```json|```/g, '').trim()
   return JSON.parse(text)
 }
 

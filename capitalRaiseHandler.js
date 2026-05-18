@@ -122,7 +122,7 @@ If you cannot confidently identify a raise or participant, set "confidence": "lo
   let parsed
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 1000,
       messages: [{ role: 'user', content: content }],
       system: systemPrompt,

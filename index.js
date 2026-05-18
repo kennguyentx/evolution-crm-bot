@@ -221,7 +221,10 @@ async function handleDealUpdate(interaction) {
     updates.status = 'Active'
   }
 
-  await supabase.from('deals').update(updates).eq('id', deal.id)
+  const { error: updateErr } = await supabase.from('deals').update(updates).eq('id', deal.id)
+  if (updateErr) {
+    return interaction.reply({ content: `❌ Failed to update deal: ${updateErr.message}`, ephemeral: true })
+  }
 
   const statusChanged = updates.status !== deal.status
     ? ` | Status → \`${updates.status}\`` : ''
@@ -303,7 +306,7 @@ async function handleDigest(interaction) {
   ).join('\n')
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
+    model: 'claude-sonnet-4-6',
     max_tokens: 800,
     messages: [{
       role: 'user',
@@ -320,9 +323,13 @@ async function handleLog(interaction) {
   const note = interaction.options.getString('note')
   const deal = await findDeal(company)
 
+  if (!deal) {
+    return interaction.reply({ content: `⚠️ No deal found matching "${company}" — log a note anyway? Use the agent to log against a specific deal.`, ephemeral: true })
+  }
+
   const { error } = await supabase.from('interactions').insert({
-    deal_id: deal?.id || null,
-    interaction_type: 'call',
+    deal_id: deal.id,
+    interaction_type: 'note',
     summary: note,
     interaction_date: new Date().toISOString(),
     logged_by: interaction.user.username,
@@ -330,7 +337,7 @@ async function handleLog(interaction) {
 
   if (error) return interaction.reply({ content: `❌ Error: ${error.message}`, ephemeral: true })
   await interaction.reply({
-    content: `📝 Interaction logged${deal ? ` on **${deal.company_name}**` : ''}: ${note}`,
+    content: `📝 Interaction logged on **${deal.company_name}**: ${note}`,
   })
 }
 

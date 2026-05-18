@@ -211,7 +211,7 @@ const tools = [
     input_schema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Dropbox folder path. Use "/Ken Nguyen/Evolution Strategy Partners" for the root, or a subfolder like "/Ken Nguyen/Evolution Strategy Partners/Deals/DiPonio Holdings"' },
+        path: { type: 'string', description: 'Dropbox folder path. Use "" (empty string) for the account root, or a subfolder like "/Evolution Strategy Partners/Deals/DiPonio Holdings"' },
       },
       required: ['path'],
     },
@@ -475,7 +475,7 @@ async function executeTool(name, input) {
       if (fileExt === '.pdf') {
         const base64 = buffer.toString('base64')
         const extractResp = await anthropic.messages.create({
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-sonnet-4-6',
           max_tokens: 4000,
           messages: [{
             role: 'user',
@@ -575,8 +575,6 @@ async function handleAgentMessage(message) {
   const channelId = message.channel.id
   if (!conversations.has(channelId)) conversations.set(channelId, [])
   const history = conversations.get(channelId)
-
-  history.push({ role: 'user', content: message.content })
 
   await message.channel.sendTyping()
 
