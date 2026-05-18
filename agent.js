@@ -207,18 +207,18 @@ const tools = [
   },
   {
     name: 'list_files',
-    description: 'List files and folders at any path in the Evolution Strategy Dropbox. Use for browsing company files, portco documents, deal room files, or anything stored in Dropbox.',
+    description: 'List files and folders in the Evolution Strategy Dropbox. Only call this when the user explicitly asks about files, documents, or folders in Dropbox. Do NOT call proactively.',
     input_schema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Dropbox folder path e.g. /Evolution Strategy Partners/Deals/DiPonio' },
+        path: { type: 'string', description: 'Dropbox folder path. Use "/Ken Nguyen/Evolution Strategy Partners" for the root, or a subfolder like "/Ken Nguyen/Evolution Strategy Partners/Deals/DiPonio Holdings"' },
       },
       required: ['path'],
     },
   },
   {
     name: 'read_file',
-    description: 'Read the contents of any file in the Evolution Strategy Dropbox. Works with PDF, Word, Excel, CSV, and text files. Always call list_files first to get the exact path.',
+    description: 'Read the contents of a specific file in the Evolution Strategy Dropbox. Only call this when the user explicitly asks to read or summarize a specific file. Always call list_files first to confirm the exact path.',
     input_schema: {
       type: 'object',
       properties: {
