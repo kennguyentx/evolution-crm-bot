@@ -1,9 +1,11 @@
 // Evolution CRM Agent — conversational interface powered by Claude
 const Anthropic = require('@anthropic-ai/sdk')
 const { createClient } = require('@supabase/supabase-js')
+const { Dropbox } = require('dropbox')
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
+const dbx = new Dropbox({ accessToken: process.env.DROPBOX_ACCESS_TOKEN })
 
 function fmt(n) {
   if (!n) return '—'
@@ -198,6 +200,28 @@ const tools = [
       required: ['company_name'],
     },
   },
+  {
+    name: 'list_files',
+    description: 'List files and folders at any path in the Evolution Strategy Dropbox. Use for browsing company files, portco documents, deal room files, or anything stored in Dropbox.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Dropbox folder path e.g. /Evolution Strategy Partners/Deals/DiPonio' },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'read_file',
+    description: 'Read the contents of any file in the Evolution Strategy Dropbox. Works with PDF, Word, Excel, CSV, and text files. Always call list_files first to get the exact path.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Full Dropbox file path from list_files' },
+      },
+      required: ['path'],
+    },
+  },
 ]
 
 // Tool execution
@@ -389,6 +413,59 @@ async function executeTool(name, input) {
       if (!deals?.length) return { error: 'Deal not found' }
       const { data: contacts } = await supabase.from('contact_deal_links').select('role, contact:contacts(first_name, last_name, firm, email, phone, contact_type)').eq('deal_id', deals[0].id)
       return { company_name: deals[0].company_name, contacts }
+    }
+
+    case 'list_files': {
+      const res = await dbx.filesListFolder({ path: input.path, recursive: false })
+      const items = res.result.entries.map(e => ({
+        name: e.name,
+        path: e.path_lower,
+        type: e['.tag'],
+        size: e.size,
+      }))
+      items.sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
+        return a.name.localeCompare(b.name)
+      })
+      return { folder: input.path, items }
+    }
+
+    case 'read_file': {
+      const fileExt = input.path.slice(input.path.lastIndexOf('.')).toLowerCase()
+      const READABLE = new Set(['.pdf', '.txt', '.md', '.csv', '.docx', '.xlsx', '.xls'])
+      if (!READABLE.has(fileExt)) return { error: `Cannot read file type: ${fileExt}` }
+
+      const res = await dbx.filesDownload({ path: input.path })
+      const buffer = res.result.fileBinary
+      const base64 = buffer.toString('base64')
+      const fileName = input.path.split('/').pop()
+
+      if (['.txt', '.md', '.csv'].includes(fileExt)) {
+        return { file: fileName, content: buffer.toString('utf-8').slice(0, 20000) }
+      }
+
+      let fileContent
+      if (fileExt === '.pdf') {
+        fileContent = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
+      } else if (['.xlsx', '.xls'].includes(fileExt)) {
+        fileContent = { type: 'document', source: { type: 'base64', media_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', data: base64 } }
+      } else if (fileExt === '.docx') {
+        fileContent = { type: 'document', source: { type: 'base64', media_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', data: base64 } }
+      }
+
+      const extractResp = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 4000,
+        messages: [{
+          role: 'user',
+          content: [
+            fileContent,
+            { type: 'text', text: `Extract and summarize the full content of this file "${fileName}". Include all key facts, figures, dates, parties, and terms. Be comprehensive.` },
+          ],
+        }],
+      })
+      const content = extractResp.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
+      return { file: fileName, content }
     }
 
     default:
