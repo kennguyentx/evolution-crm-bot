@@ -421,28 +421,42 @@ async function executeTool(name, input) {
     }
 
     case 'list_files': {
-      // Normalize path — always ensure we're under the correct root
+      // Always use the correct known path — never trust model-provided paths blindly
+      const ROOT = '/Ken Nguyen/Evolution Strategy Partners'
       let dbxPath = input.path || ''
-      // Catch any bad paths and redirect to root
-      if (!dbxPath || dbxPath === '/' || dbxPath === '.' || dbxPath === '..' || !dbxPath.startsWith('/')) {
-        dbxPath = '/Ken Nguyen/Evolution Strategy Partners'
+
+      // Normalize bad paths
+      if (!dbxPath || dbxPath === '/' || dbxPath === '.' || dbxPath === '..' || dbxPath.includes('..') || !dbxPath.startsWith('/Ken')) {
+        dbxPath = ROOT
       }
-      // Catch relative traversal attempts
-      if (dbxPath.includes('..')) {
-        dbxPath = '/Ken Nguyen/Evolution Strategy Partners'
+
+      try {
+        const res = await dbx.filesListFolder({ path: dbxPath, recursive: false })
+        const items = res.result.entries.map(e => ({
+          name: e.name,
+          path: e.path_display, // use path_display to preserve casing
+          type: e['.tag'],
+          size: e.size,
+        }))
+        items.sort((a, b) => {
+          if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
+          return a.name.localeCompare(b.name)
+        })
+        return { folder: dbxPath, items }
+      } catch (err) {
+        // If path fails, fall back to root
+        if (dbxPath !== ROOT) {
+          const res = await dbx.filesListFolder({ path: ROOT, recursive: false })
+          const items = res.result.entries.map(e => ({
+            name: e.name,
+            path: e.path_display,
+            type: e['.tag'],
+            size: e.size,
+          }))
+          return { folder: ROOT, note: `Path "${dbxPath}" not found, showing root instead`, items }
+        }
+        throw err
       }
-      const res = await dbx.filesListFolder({ path: dbxPath, recursive: false })
-      const items = res.result.entries.map(e => ({
-        name: e.name,
-        path: e.path_lower,
-        type: e['.tag'],
-        size: e.size,
-      }))
-      items.sort((a, b) => {
-        if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
-        return a.name.localeCompare(b.name)
-      })
-      return { folder: dbxPath, items }
     }
 
     case 'read_file': {
