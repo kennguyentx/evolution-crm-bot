@@ -421,9 +421,14 @@ async function executeTool(name, input) {
     }
 
     case 'list_files': {
-      // Normalize path — Dropbox uses empty string for root
+      // Normalize path — always ensure we're under the correct root
       let dbxPath = input.path || ''
-      if (dbxPath === '/' || dbxPath === '.' || dbxPath === '') {
+      // Catch any bad paths and redirect to root
+      if (!dbxPath || dbxPath === '/' || dbxPath === '.' || dbxPath === '..' || !dbxPath.startsWith('/')) {
+        dbxPath = '/Ken Nguyen/Evolution Strategy Partners'
+      }
+      // Catch relative traversal attempts
+      if (dbxPath.includes('..')) {
         dbxPath = '/Ken Nguyen/Evolution Strategy Partners'
       }
       const res = await dbx.filesListFolder({ path: dbxPath, recursive: false })
