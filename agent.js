@@ -598,7 +598,7 @@ When creating a deal and banker not found (contact_not_found: true), ask for ban
 
 Capital raises are tracked separately. To log a capital raise update, just describe it naturally in any channel — e.g. "Sinclair sent a term sheet on Coggins" or "BMO passed, geographic concentration". The bot will parse and confirm before saving. You can tell users this when they ask about capital raises.
 
-DROPBOX: When calling list_files, start with path "" (empty string) to list the account root, then drill into subfolders using the exact paths returned. The Evolution Strategy Partners folder is at the root level. Deal files are typically under "/Evolution Strategy Partners/Deals/[Company Name]". Portfolio files are under "/Evolution Strategy Partners/Portfolio Co's/[Company Name]". Always use exact paths returned by list_files — never guess.
+DROPBOX: When calling list_files, start with path "" (empty string) to list the account root, then drill into subfolders using the exact paths returned. The Evolution Strategy Partners folder is at the root level. Deal files are typically under "/Evolution Strategy Partners/Deals/[Company Name]". Portfolio files are under "/Evolution Strategy Partners/Portfolio Co's/[Company Name]". Always use exact paths returned by list_files — never guess. IMPORTANT: Do not narrate what you are about to do — just call the tools immediately and report results when done.
 
 Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
       tools,
@@ -608,7 +608,7 @@ Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric',
     // Process tool calls using local messages array only
     let currentResponse = response
     let iterations = 0
-    const MAX_ITERATIONS = 5
+    const MAX_ITERATIONS = 8
 
     while (currentResponse.stop_reason === 'tool_use' && iterations < MAX_ITERATIONS) {
       iterations++
