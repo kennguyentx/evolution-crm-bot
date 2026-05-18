@@ -762,9 +762,8 @@ client.on('messageCreate', async message => {
     }
   }
 
-  // Handle conversational agent in #crm-assistant channel
-  const agentChannel = process.env.DISCORD_AGENT_CHANNEL || 'crm-assistant'
-  if (message.channel.name?.includes(agentChannel) && !message.attachments.size) {
+  // Handle conversational agent in all channels
+  if (!message.attachments.size) {
     await handleAgentMessage(message)
   }
 })
