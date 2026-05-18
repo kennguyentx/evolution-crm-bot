@@ -24,6 +24,7 @@ const NOTES_CHANNEL = process.env.DISCORD_NOTES_CHANNEL || 'meeting-notes'
 
 async function handleMeetingNotes(message) {
   if (message.author.bot) return false
+  console.log(`[meetingNotes] channel name: "${message.channel.name}", looking for: "${NOTES_CHANNEL}"`)
   if (!message.channel.name?.includes(NOTES_CHANNEL)) return false
 
   const raw = message.content.trim()
