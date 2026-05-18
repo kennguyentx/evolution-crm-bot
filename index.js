@@ -4,6 +4,7 @@ const Anthropic = require('@anthropic-ai/sdk')
 const { handleAgentMessage } = require('./agent')
 const fetch = require('node-fetch')
 const { handleCapitalMessage } = require('./capitalRaiseHandler')
+const { handleMeetingNotes } = require('./meetingNotesHandler')
 const { FormData } = require('formdata-node')
 const fs = require('fs')
 const path = require('path')
@@ -507,6 +508,7 @@ client.on('interactionCreate', async interaction => {
 // Handle CIM uploads and missing field replies
 client.on('messageCreate', async message => {
   if (message.author.bot) return
+  if (await handleMeetingNotes(message)) return
   if (await handleCapitalMessage(message)) return
 
   const intakeChannel = process.env.DISCORD_INTAKE_CHANNEL || 'deal-intake'
