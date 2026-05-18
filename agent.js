@@ -1,11 +1,16 @@
 // Evolution CRM Agent — conversational interface powered by Claude
 const Anthropic = require('@anthropic-ai/sdk')
 const { createClient } = require('@supabase/supabase-js')
-const { Dropbox } = require('dropbox')
+const { Dropbox, DropboxAuth } = require('dropbox')
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 4 })
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
-const dbx = new Dropbox({ accessToken: process.env.DROPBOX_ACCESS_TOKEN })
+const dbxAuth = new DropboxAuth({
+  clientId: process.env.DROPBOX_APP_KEY,
+  clientSecret: process.env.DROPBOX_APP_SECRET,
+  refreshToken: process.env.DROPBOX_REFRESH_TOKEN,
+})
+const dbx = new Dropbox({ auth: dbxAuth })
 
 function fmt(n) {
   if (!n) return '—'
