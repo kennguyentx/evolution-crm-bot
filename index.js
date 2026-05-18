@@ -528,6 +528,7 @@ client.on('interactionCreate', async interaction => {
 // Handle CIM uploads and missing field replies
 client.on('messageCreate', async message => {
   if (message.author.bot) return
+  console.log(`[messageCreate] channel: ${message.channel.name}, author: ${message.author.username}`)
   if (await handleMeetingNotes(message)) return
   if (await handleCapitalMessage(message)) return
 
