@@ -232,11 +232,21 @@ async function executeTool(name, input) {
     }
 
     case 'update_deal': {
-      const { data: deals } = await supabase.from('deals').select('id, company_name').ilike('company_name', `%${input.company_name}%`).limit(1)
+      const { data: deals } = await supabase.from('deals').select('id, company_name, status').ilike('company_name', `%${input.company_name}%`).limit(1)
       if (!deals?.length) return { error: 'Deal not found' }
-      const { error } = await supabase.from('deals').update(input.updates).eq('id', deals[0].id)
+      const updates = { ...input.updates }
+      if (updates.stage) {
+        if (updates.stage === 'Closed (Platform)' || updates.stage === 'Closed (Add-On)') {
+          updates.status = 'Closed'
+        } else if (updates.stage.startsWith('Pass')) {
+          updates.status = 'Dead'
+        } else if (!updates.status) {
+          updates.status = 'Active'
+        }
+      }
+      const { error } = await supabase.from('deals').update(updates).eq('id', deals[0].id)
       if (error) return { error: error.message }
-      return { success: true, company_name: deals[0].company_name, updated: input.updates }
+      return { success: true, company_name: deals[0].company_name, updated: updates }
     }
 
     case 'log_interaction': {

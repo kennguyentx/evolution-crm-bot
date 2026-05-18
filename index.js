@@ -207,10 +207,23 @@ async function handleDealUpdate(interaction) {
     return interaction.reply({ content: `❌ No deal found matching "${company}"`, ephemeral: true })
   }
 
-  await supabase.from('deals').update({ stage }).eq('id', deal.id)
+  const updates = { stage }
+
+  if (stage === 'Closed (Platform)' || stage === 'Closed (Add-On)') {
+    updates.status = 'Closed'
+  } else if (stage.startsWith('Pass')) {
+    updates.status = 'Dead'
+  } else {
+    updates.status = 'Active'
+  }
+
+  await supabase.from('deals').update(updates).eq('id', deal.id)
+
+  const statusChanged = updates.status !== deal.status
+    ? ` | Status → \`${updates.status}\`` : ''
 
   await interaction.reply({
-    content: `✅ **${deal.company_name}** updated: \`${deal.stage}\` → \`${stage}\``,
+    content: `✅ **${deal.company_name}** updated: \`${deal.stage}\` → \`${stage}\`${statusChanged}`,
   })
 }
 
