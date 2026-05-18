@@ -144,7 +144,7 @@ If you cannot confidently identify a raise or participant, set "confidence": "lo
   }
 
   // ── Build confirmation message ────────────────────────────
-  const lines: string[] = []
+  const lines = []
   lines.push(`📋 **${parsed.raise_name ?? 'Capital raise'} update**\n`)
 
   if (parsed.updates?.length) {
@@ -182,8 +182,8 @@ If you cannot confidently identify a raise or participant, set "confidence": "lo
 // ─── Execute confirmed ops ────────────────────────────────────
 
 async function executePendingOps(message, { parsed, raises, loggedBy }) {
-  const errors: string[] = []
-  const done: string[] = []
+  const errors = []
+  const done = []
 
   // Process participant updates
   for (const u of parsed.updates ?? []) {
@@ -237,7 +237,7 @@ async function executePendingOps(message, { parsed, raises, loggedBy }) {
 
 // ─── Helpers ─────────────────────────────────────────────────
 
-function getOldValue(raises: any[], participantId: string, field: string): string | null {
+function getOldValue(raises, participantId, field) {
   for (const r of raises ?? []) {
     for (const p of r.raise_participants ?? []) {
       if (p.id === participantId) return String(p[field] ?? '')
@@ -246,8 +246,8 @@ function getOldValue(raises: any[], participantId: string, field: string): strin
   return null
 }
 
-function humanField(field: string): string {
-  const map: Record<string, string> = {
+function humanField(field) {
+  const map = {
     status: 'Status', teaser_date: 'Teaser', nda_date: 'NDA', cim_date: 'CIM',
     first_call_date: 'First call', model_date: 'Model sent', term_sheet_date: 'Term sheet',
     invested_date: 'Invested date', pass_date: 'Pass date', pass_reason: 'Pass reason',
