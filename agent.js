@@ -524,7 +524,8 @@ async function executeTool(name, input) {
 
 // Trim tool results in history to avoid bloating token count
 function trimHistory(history) {
-  return history.map(msg => {
+  // First trim tool result content to avoid token bloat
+  const trimmed = history.map(msg => {
     if (!Array.isArray(msg.content)) return msg
     return {
       ...msg,
@@ -532,9 +533,10 @@ function trimHistory(history) {
         if (block.type === 'tool_result') {
           try {
             const parsed = JSON.parse(block.content)
-            // Truncate large arrays to 5 items
             if (parsed.deals && parsed.deals.length > 5) parsed.deals = parsed.deals.slice(0, 5)
             if (parsed.contacts && parsed.contacts.length > 5) parsed.contacts = parsed.contacts.slice(0, 5)
+            // Truncate large file content in history
+            if (parsed.content && parsed.content.length > 1000) parsed.content = parsed.content.slice(0, 1000) + '... [truncated]'
             return { ...block, content: JSON.stringify(parsed) }
           } catch { return block }
         }
@@ -542,6 +544,19 @@ function trimHistory(history) {
       })
     }
   })
+
+  // Only trim from the start, and never split a tool_use/tool_result pair
+  if (trimmed.length <= 10) return trimmed
+
+  // Find a safe cut point — must cut before a user message that isn't a tool_result
+  let cutAt = trimmed.length - 10
+  while (cutAt < trimmed.length) {
+    const msg = trimmed[cutAt]
+    const isToolResult = Array.isArray(msg.content) && msg.content.every(b => b.type === 'tool_result')
+    if (msg.role === 'user' && !isToolResult) break
+    cutAt++
+  }
+  return trimmed.slice(cutAt)
 }
 
 // Conversation memory per channel (last 10 messages only)
