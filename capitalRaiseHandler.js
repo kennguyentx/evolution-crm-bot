@@ -138,7 +138,7 @@ If you cannot confidently identify a raise or participant, set "confidence": "lo
     await message.reply(
       `I picked up a capital-related message but couldn't confidently identify what to update.\n` +
       (parsed.ambiguity ? `\nUnclear: ${parsed.ambiguity}` : '') +
-      `\nRe-phrase or use \`/log [raise name] [firm] [update]\` to be explicit.`
+      `\nTry being more specific, e.g.:\n> "Sinclair sent a term sheet on Coggins — $12M senior, SOFR+4.5"\n> "BMO passed on DiPonio, geographic concentration"\n> "Had a call with Timber Bay today, they're interested"`
     )
     return true
   }

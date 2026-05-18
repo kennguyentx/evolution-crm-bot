@@ -427,6 +427,8 @@ Be concise — this is Discord. Use bullet points and short sentences. Format nu
 
 When creating a deal and banker not found (contact_not_found: true), ask for banker details in one message.
 
+Capital raises are tracked separately. To log a capital raise update, just describe it naturally in any channel — e.g. "Sinclair sent a term sheet on Coggins" or "BMO passed, geographic concentration". The bot will parse and confirm before saving. You can tell users this when they ask about capital raises.
+
 Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
       tools,
       messages: trimHistory(history),
