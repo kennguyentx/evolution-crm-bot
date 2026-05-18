@@ -581,6 +581,12 @@ async function handleAgentMessage(message) {
   await message.channel.sendTyping()
 
   try {
+    // Use a local messages array for the agentic loop — only persist clean user/assistant turns
+    const messages = [
+      ...trimHistory(history),
+      { role: 'user', content: message.content }
+    ]
+
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5',
       max_tokens: 800,
@@ -596,13 +602,13 @@ DROPBOX: When calling list_files, start with path "" (empty string) to list the 
 
 Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
       tools,
-      messages: trimHistory(history),
+      messages,
     })
 
-    // Process tool calls
+    // Process tool calls using local messages array only
     let currentResponse = response
     let iterations = 0
-    const MAX_ITERATIONS = 5 // allow enough iterations for file browsing
+    const MAX_ITERATIONS = 5
 
     while (currentResponse.stop_reason === 'tool_use' && iterations < MAX_ITERATIONS) {
       iterations++
@@ -619,20 +625,24 @@ Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric',
         toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(result) })
       }
 
-      history.push({ role: 'assistant', content: currentResponse.content })
-      history.push({ role: 'user', content: toolResults })
+      messages.push({ role: 'assistant', content: currentResponse.content })
+      messages.push({ role: 'user', content: toolResults })
 
       currentResponse = await anthropic.messages.create({
         model: 'claude-haiku-4-5',
         max_tokens: 800,
         system: `You are the Evolution CRM assistant. Be concise — this is Discord. Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
         tools,
-        messages: trimHistory(history),
+        messages,
       })
     }
 
     const finalText = currentResponse.content.filter(b => b.type === 'text').map(b => b.text).join('')
-    history.push({ role: 'assistant', content: currentResponse.content })
+
+    // Only persist clean text turns to history
+    history.push({ role: 'user', content: message.content })
+    history.push({ role: 'assistant', content: finalText || '✅ Done.' })
+    if (history.length > 10) history.splice(0, history.length - 10)
 
     const replyText = finalText.trim() || '✅ Done.'
 
