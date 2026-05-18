@@ -534,6 +534,8 @@ When creating a deal and banker not found (contact_not_found: true), ask for ban
 
 Capital raises are tracked separately. To log a capital raise update, just describe it naturally in any channel — e.g. "Sinclair sent a term sheet on Coggins" or "BMO passed, geographic concentration". The bot will parse and confirm before saving. You can tell users this when they ask about capital raises.
 
+DROPBOX: The Evolution Strategy Dropbox root path is "/Evolution Strategy Partners". Always start list_files calls from this path or a known subfolder. Never guess paths — if unsure, call list_files on the root first then drill down. Deal files are typically under "/Evolution Strategy Partners/Deals/[Company Name]".
+
 Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
       tools,
       messages: trimHistory(history),
