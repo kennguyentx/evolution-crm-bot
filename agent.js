@@ -227,6 +227,91 @@ const tools = [
       required: ['path'],
     },
   },
+  {
+    name: 'get_calendar_events',
+    description: 'Get upcoming calendar events. Use for "what\'s on my calendar", "upcoming meetings", "schedule this week", or any question about scheduled events.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        start_date: { type: 'string', description: 'Start date YYYY-MM-DD (defaults to today)' },
+        end_date: { type: 'string', description: 'End date YYYY-MM-DD (defaults to 30 days out)' },
+        event_type: { type: 'string', description: 'meeting | call | deadline | reminder | site visit | other' },
+      },
+    },
+  },
+  {
+    name: 'create_calendar_event',
+    description: 'Create a new calendar event.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        event_date: { type: 'string', description: 'YYYY-MM-DD' },
+        start_time: { type: 'string', description: 'HH:MM 24-hour format' },
+        end_time: { type: 'string', description: 'HH:MM 24-hour format' },
+        event_type: { type: 'string', description: 'meeting | call | deadline | reminder | site visit | other' },
+        description: { type: 'string' },
+        deal_id: { type: 'string', description: 'UUID — use search_deals first to find it' },
+        contact_id: { type: 'string', description: 'UUID — use search_contacts first to find it' },
+      },
+      required: ['title', 'event_date'],
+    },
+  },
+  {
+    name: 'get_portfolio',
+    description: 'Get portfolio companies with their details. Use for questions about current or exited portfolio companies.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', description: 'Active | Exited — omit for all' },
+      },
+    },
+  },
+  {
+    name: 'get_investors',
+    description: 'Get LP investors with their investment history, entities, and committed amounts.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search by name or firm' },
+      },
+    },
+  },
+  {
+    name: 'search_capital_contacts',
+    description: 'Search the capital contacts master list — 1,180 equity investors and lenders from the Evolution tracker. Use for questions about specific firms, investors, or lenders we track.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Firm name, contact name, or keyword' },
+        source: { type: 'string', description: 'equity | lender' },
+        status: { type: 'string', description: 'active | pass | inactive' },
+      },
+    },
+  },
+  {
+    name: 'search_notes',
+    description: 'Search meeting notes and interaction logs from the notes table. Use for questions about what was discussed, follow-ups, or logged memos.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Keyword to search in summary and text' },
+        deal_id: { type: 'string', description: 'Filter by deal UUID (from search_deals)' },
+        logged_by: { type: 'string', description: 'Filter by person who logged it (Ken, SS, etc.)' },
+      },
+    },
+  },
+  {
+    name: 'get_capital_raises',
+    description: 'Get capital raises with all participants, their statuses, committed amounts, and dates. Use for questions about fundraising activity or investor engagement on a deal.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        deal_name: { type: 'string', description: 'Filter by deal or raise name keyword' },
+        status: { type: 'string', description: 'Open | Closed' },
+      },
+    },
+  },
 ]
 
 // Tool execution
@@ -517,6 +602,103 @@ async function executeTool(name, input) {
       return { error: `Unsupported file type: ${fileExt}` }
     }
 
+    case 'get_calendar_events': {
+      const today = new Date().toISOString().split('T')[0]
+      const start = input.start_date || today
+      const end = input.end_date || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      let query = supabase.from('calendar_events').select('*').gte('event_date', start).lte('event_date', end).order('event_date').order('start_time', { nullsFirst: false })
+      if (input.event_type) query = query.eq('event_type', input.event_type)
+      const { data, error } = await query
+      if (error) return { error: error.message }
+      return { events: data, count: data.length }
+    }
+
+    case 'create_calendar_event': {
+      const { data, error } = await supabase.from('calendar_events').insert({
+        title: input.title,
+        event_date: input.event_date,
+        start_time: input.start_time || null,
+        end_time: input.end_time || null,
+        event_type: input.event_type || 'meeting',
+        description: input.description || null,
+        deal_id: input.deal_id || null,
+        contact_id: input.contact_id || null,
+      }).select().single()
+      if (error) return { error: error.message }
+      return { success: true, event_id: data.id, title: data.title, event_date: data.event_date }
+    }
+
+    case 'get_portfolio': {
+      let query = supabase.from('portfolio_companies').select('*').order('name')
+      if (input.status) query = query.eq('status', input.status)
+      const { data, error } = await query
+      if (error) return { error: error.message }
+      return { companies: data, count: (data || []).length }
+    }
+
+    case 'get_investors': {
+      let query = supabase.from('investors').select(`
+        id, first_name, last_name, firm, email, investor_type, notes,
+        investments:lp_investments(invested_amount, investment_date, portfolio_company:portfolio_companies(name)),
+        entities:investment_entities(name, entity_type),
+        commitments:lp_commitments(committed_amount, status)
+      `).limit(20)
+      if (input.query) query = query.or(`first_name.ilike.%${input.query}%,last_name.ilike.%${input.query}%,firm.ilike.%${input.query}%`)
+      const { data, error } = await query.order('last_name')
+      if (error) return { error: error.message }
+      return {
+        investors: (data || []).map(inv => ({
+          ...inv,
+          total_invested: (inv.investments || []).reduce((s, i) => s + (i.invested_amount || 0), 0),
+          total_committed: (inv.commitments || []).filter(c => ['Committed','Funded'].includes(c.status)).reduce((s, c) => s + (c.committed_amount || 0), 0),
+        })),
+        count: (data || []).length,
+      }
+    }
+
+    case 'search_capital_contacts': {
+      let query = supabase.from('capital_contacts').select('id, firm, firm_type, firm_focus, investment_pref, contact_name, title, email, phone, conf_lead, notes, status, source').limit(25)
+      if (input.query) query = query.or(`firm.ilike.%${input.query}%,contact_name.ilike.%${input.query}%,notes.ilike.%${input.query}%,firm_type.ilike.%${input.query}%`)
+      if (input.source) query = query.eq('source', input.source)
+      if (input.status) query = query.eq('status', input.status)
+      const { data, error } = await query.order('firm')
+      if (error) return { error: error.message }
+      return { contacts: data, count: (data || []).length }
+    }
+
+    case 'search_notes': {
+      let query = supabase.from('notes').select(`
+        id, note_date, summary, next_steps, logged_by, source,
+        deal:deals(company_name), contact:contacts(first_name, last_name)
+      `).order('note_date', { ascending: false }).limit(20)
+      if (input.query) query = query.or(`summary.ilike.%${input.query}%,raw_text.ilike.%${input.query}%,next_steps.ilike.%${input.query}%`)
+      if (input.deal_id) query = query.eq('deal_id', input.deal_id)
+      if (input.logged_by) query = query.ilike('logged_by', `%${input.logged_by}%`)
+      const { data, error } = await query
+      if (error) return { error: error.message }
+      return { notes: data, count: (data || []).length }
+    }
+
+    case 'get_capital_raises': {
+      let query = supabase.from('capital_raises').select(`
+        id, name, status, target_equity, target_debt, close_date, notes,
+        deal:deals(id, company_name),
+        participants:raise_participants(id, firm_name, contact_name, status, committed_amount, debt_amount, notes, pass_reason, term_sheet_date)
+      `).order('created_at', { ascending: false })
+      if (input.deal_name) query = query.ilike('name', `%${input.deal_name}%`)
+      if (input.status) query = query.eq('status', input.status)
+      const { data, error } = await query
+      if (error) return { error: error.message }
+      return {
+        raises: (data || []).map(r => ({
+          ...r,
+          total_committed: (r.participants || []).filter(p => ['invested','confirmed'].includes(p.status)).reduce((s, p) => s + (p.committed_amount || p.debt_amount || 0), 0),
+          participant_count: (r.participants || []).length,
+        })),
+        count: (data || []).length,
+      }
+    }
+
     default:
       return { error: 'Unknown tool: ' + name }
   }
@@ -594,7 +776,9 @@ Be concise — this is Discord. Use bullet points and short sentences. Format nu
 
 When creating a deal and banker not found (contact_not_found: true), ask for banker details in one message.
 
-Capital raises are tracked separately. To log a capital raise update, just describe it naturally in any channel — e.g. "Sinclair sent a term sheet on Coggins" or "BMO passed, geographic concentration". The bot will parse and confirm before saving. You can tell users this when they ask about capital raises.
+Capital raises are tracked separately in the CRM — use get_capital_raises to see them. To log a capital raise participant update (e.g. "Sinclair sent a term sheet on Coggins" or "BMO passed"), just describe it naturally — the bot will parse and confirm before saving.
+
+CALENDAR: Use get_calendar_events for schedule questions. Default to the next 30 days when no date range specified.
 
 DROPBOX: When calling list_files, start with path "" (empty string) to list the account root, then drill into subfolders using the exact paths returned. The Evolution Strategy Partners folder is at the root level. Deal files are typically under "/Evolution Strategy Partners/Deals/[Company Name]". Portfolio files are under "/Evolution Strategy Partners/Portfolio Co's/[Company Name]". Always use exact paths returned by list_files — never guess. IMPORTANT: Do not narrate what you are about to do — just call the tools immediately and report results when done.
 
