@@ -37,6 +37,21 @@ function setRateLimit(userId) {
 // Tools the agent can use
 const tools = [
   {
+    name: 'count_deals',
+    description: 'Get an exact count of deals matching filters. Use for ANY counting question ("how many deals", "how many in 2025"). Returns true DB total with no row cap.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        sector:       { type: 'string' },
+        geography:    { type: 'string' },
+        stage:        { type: 'string' },
+        status:       { type: 'string', description: 'Active | Dead | Closed — omit for all' },
+        year:         { type: 'number', description: 'Filter by created_at year' },
+        sourced_year: { type: 'number', description: 'Filter by sourced_date year' },
+      },
+    },
+  },
+  {
     name: 'search_deals',
     description: 'Search deals by company name, stage, sector, geography, or status. Use for finding deals, checking pipeline, or answering questions about deals.',
     input_schema: {
@@ -228,6 +243,28 @@ const tools = [
     },
   },
   {
+    name: 'browse_best_practices',
+    description: 'REQUIRED FIRST STEP for any question about standard terms, covenants, market benchmarks, LOI structure, diligence, or best practices. Lists folders/files in the Best Practices Dropbox library. Omit subfolder to see all categories, then drill in.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        subfolder: { type: 'string', description: 'Subfolder name relative to Best Practices root (e.g. "Credit Agreements"). Omit to list all categories.' },
+      },
+    },
+  },
+  {
+    name: 'read_best_practices_file',
+    description: 'Read and analyze a file from the Best Practices library. Use for ANY question about credit agreement terms, covenants, DSCR, leverage, LOI structure, diligence checklists, or market-standard terms. Call browse_best_practices first to get the exact path.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Full Dropbox path from browse_best_practices' },
+        analysis_question: { type: 'string', description: 'Specific question to focus on' },
+      },
+      required: ['path'],
+    },
+  },
+  {
     name: 'get_calendar_events',
     description: 'Get upcoming calendar events. Use for "what\'s on my calendar", "upcoming meetings", "schedule this week", or any question about scheduled events.',
     input_schema: {
@@ -317,6 +354,62 @@ const tools = [
 // Tool execution
 async function executeTool(name, input) {
   switch (name) {
+
+    case 'count_deals': {
+      let q = supabase.from('deals').select('*', { count: 'exact', head: true })
+      if (input.sector)       q = q.ilike('sector', `%${input.sector}%`)
+      if (input.geography)    q = q.ilike('geography', `%${input.geography}%`)
+      if (input.stage)        q = q.eq('stage', input.stage)
+      if (input.status)       q = q.eq('status', input.status)
+      if (input.year)         q = q.gte('created_at', `${input.year}-01-01`).lte('created_at', `${input.year}-12-31`)
+      if (input.sourced_year) q = q.gte('sourced_date', `${input.sourced_year}-01-01`).lte('sourced_date', `${input.sourced_year}-12-31`)
+      const { count, error } = await q
+      if (error) return { error: error.message }
+      return { total_count: count ?? 0 }
+    }
+
+    case 'browse_best_practices': {
+      const BP_ROOT = '/Evolution Strategy Partners/Best Practices'
+      const folder = input.subfolder
+        ? `${BP_ROOT}/${input.subfolder.replace(/^\/+/, '')}`
+        : BP_ROOT
+      try {
+        const res = await dbx.filesListFolder({ path: folder, recursive: false })
+        const items = res.result.entries.map(e => ({ name: e.name, path: e.path_display || e.path_lower, type: e['.tag'] }))
+        return { folder, items, tip: 'Call read_best_practices_file with the exact file path to analyze its contents.' }
+      } catch (err) {
+        return { error: err.message }
+      }
+    }
+
+    case 'read_best_practices_file': {
+      const fileExt = input.path.slice(input.path.lastIndexOf('.')).toLowerCase()
+      try {
+        const res = await dbx.filesDownload({ path: input.path })
+        const buffer = res.result.fileBinary
+        const fileName = input.path.split('/').pop()
+        if (['.txt', '.md', '.csv'].includes(fileExt)) {
+          return { file: fileName, content: buffer.toString('utf-8').slice(0, 20000) }
+        }
+        if (fileExt !== '.pdf') return { error: `Cannot read file type: ${fileExt}` }
+        const base64 = buffer.toString('base64')
+        const question = input.analysis_question
+          ? `Focus especially on: ${input.analysis_question}`
+          : 'Provide a comprehensive summary covering all key terms, standards, thresholds, typical ranges, and important provisions.'
+        const extractResp = await anthropic.messages.create({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 4000,
+          messages: [{ role: 'user', content: [
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+            { type: 'text', text: `You are analyzing a Best Practices document: "${fileName}". ${question} Include all key terms, market-standard benchmarks, acceptable ranges, red flags, and negotiating points.` },
+          ]}],
+        })
+        const content = extractResp.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
+        return { file: fileName, path: input.path, content }
+      } catch (err) {
+        return { error: err.message }
+      }
+    }
 
     case 'search_deals': {
       let query = supabase.from('deals').select('id, company_name, stage, status, sector, geography, ebitda, revenue, description, source_notes, expected_close')
