@@ -50,7 +50,7 @@ async function handleCapitalMessage(message, _pendingMap) {
   const capitalKeywords = [
     'teaser', 'nda', 'cim', 'call', 'model', 'term sheet', 'termsheet',
     'passed', 'pass ', 'invested', 'committed', 'signed', 'diligence',
-    'dd ', 'raise', 'lender', 'investor', 'equity', 'debt', 'sofr',
+    ' dd ', 'raise', 'lender', 'investor', 'equity', 'debt', 'sofr',
     'closing fee', 'interest', 'senior', 'mezz', 'unitranche',
   ]
   const isCapitalMsg = capitalKeywords.some(kw => lower.includes(kw))
