@@ -888,17 +888,15 @@ Today: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric',
     while (currentResponse.stop_reason === 'tool_use' && iterations < MAX_ITERATIONS) {
       iterations++
       const toolUses = currentResponse.content.filter(b => b.type === 'tool_use')
-      const toolResults = []
-
-      for (const toolUse of toolUses) {
+      const toolResults = await Promise.all(toolUses.map(async toolUse => {
         let result
         try {
           result = await executeTool(toolUse.name, toolUse.input)
         } catch (err) {
           result = { error: err.message }
         }
-        toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(result) })
-      }
+        return { type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(result) }
+      }))
 
       messages.push({ role: 'assistant', content: currentResponse.content })
       messages.push({ role: 'user', content: toolResults })
